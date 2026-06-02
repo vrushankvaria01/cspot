@@ -15,6 +15,7 @@ import type { Idea, IdeaStatus } from "@/lib/types";
 import Column from "./Column";
 import IdeaCard from "./IdeaCard";
 import IdeaForm from "./IdeaForm";
+import ScheduleModal from "./ScheduleModal";
 
 const COLUMNS: { status: IdeaStatus; label: string; accent: string }[] = [
   { status: "to_start", label: "To Start", accent: "text-zinc-400" },
@@ -27,6 +28,7 @@ export default function Board() {
   const [loading, setLoading] = useState(true);
   const [formOpen, setFormOpen] = useState(false);
   const [editing, setEditing] = useState<Idea | null>(null);
+  const [scheduling, setScheduling] = useState<Idea | null>(null);
   const [activeId, setActiveId] = useState<number | null>(null);
   const [toast, setToast] = useState("");
 
@@ -89,8 +91,14 @@ export default function Board() {
     }
   }
 
-  function handleAddToCalendar() {
-    showToast("Calendar is coming next — this will schedule the idea then.");
+  function handleAddToCalendar(idea: Idea) {
+    setScheduling(idea);
+  }
+
+  function handleScheduled(saved: Idea) {
+    setIdeas((prev) => prev.map((i) => (i.id === saved.id ? saved : i)));
+    setScheduling(null);
+    showToast("Dates saved — see them on the Calendar.");
   }
 
   function handleDragStart(event: DragStartEvent) {
@@ -196,6 +204,14 @@ export default function Board() {
             setEditing(null);
           }}
           onSaved={handleSaved}
+        />
+      )}
+
+      {scheduling && (
+        <ScheduleModal
+          idea={scheduling}
+          onClose={() => setScheduling(null)}
+          onSaved={handleScheduled}
         />
       )}
 

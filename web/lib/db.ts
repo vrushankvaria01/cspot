@@ -47,7 +47,13 @@ export interface IdeaInput {
   status?: IdeaStatus;
   notes?: string;
   inspiration_url?: string;
+  record_date?: string | null;
+  edit_date?: string | null;
+  post_date?: string | null;
 }
+
+const DATE_FIELDS = new Set(["record_date", "edit_date", "post_date"]);
+const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
 
 export function getIdeas(): Idea[] {
   return getDb()
@@ -92,6 +98,9 @@ export function updateIdea(
     "status",
     "notes",
     "inspiration_url",
+    "record_date",
+    "edit_date",
+    "post_date",
   ];
   const sets: string[] = [];
   const params: Record<string, unknown> = { id };
@@ -101,6 +110,14 @@ export function updateIdea(
     if (value === undefined) continue;
     if (key === "status" && !VALID_STATUSES.includes(value as IdeaStatus)) {
       continue;
+    }
+    if (DATE_FIELDS.has(key)) {
+      // Empty string or null clears the date; otherwise require YYYY-MM-DD.
+      if (value === null || value === "") {
+        sets.push(`${key} = NULL`);
+        continue;
+      }
+      if (typeof value !== "string" || !DATE_RE.test(value)) continue;
     }
     sets.push(`${key} = @${key}`);
     params[key] = value;
