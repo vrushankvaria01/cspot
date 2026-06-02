@@ -7,7 +7,7 @@ const LINKS = [
   { href: "/", label: "Ideas", enabled: true },
   { href: "/research", label: "Research", enabled: true },
   { href: "/calendar", label: "Calendar", enabled: true },
-  { href: "/collaborations", label: "Collaborations", enabled: false },
+  { href: "/collaborations", label: "Collaborations", enabled: true },
 ];
 
 export default function Nav() {
