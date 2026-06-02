@@ -2,14 +2,19 @@
 Multi-platform tennis content research tool.
 
 Pulls signals from Reddit (public .json), YouTube (Data API), and Google Trends,
-then hands everything to Claude to surface video opportunities and talking points
+then hands everything to Gemini to surface video opportunities and talking points
 for a tennis + lifestyle creator.
+
+Usage:
+    python tennis_content_research.py            # human-readable report on stdout
+    python tennis_content_research.py --json     # JSON result on stdout, progress on stderr
 """
 
 from __future__ import annotations
 
 import json
 import os
+import sys
 import textwrap
 import time
 from datetime import datetime, timedelta, timezone
@@ -42,6 +47,14 @@ USER_AGENT = (
 )
 
 REDDIT_SLEEP = 2.0  # seconds between Reddit calls (free tier: ~10/min)
+
+
+# ---------- Logging ----------
+# Progress goes to stderr so that --json mode can keep stdout clean for the
+# machine-readable result (consumed by the web app's research API route).
+
+def log(msg: str = "") -> None:
+    print(msg, file=sys.stderr, flush=True)
 
 
 # ---------- Reddit (no auth) ----------
@@ -83,11 +96,11 @@ def fetch_reddit_comments(permalink: str) -> list[str]:
 def collect_reddit() -> list[dict]:
     all_posts = []
     for sub in SUBREDDITS:
-        print(f"  Reddit: r/{sub}")
+        log(f"  Reddit: r/{sub}")
         try:
             posts = fetch_reddit_posts(sub)
         except requests.HTTPError as e:
-            print(f"    ! failed: {e}")
+            log(f"    ! failed: {e}")
             continue
         for p in posts:
             try:
@@ -114,7 +127,7 @@ def collect_reddit() -> list[dict]:
 def collect_youtube() -> list[dict]:
     api_key = os.environ.get("YOUTUBE_API_KEY")
     if not api_key:
-        print("  YouTube: skipped (set YOUTUBE_API_KEY to enable)")
+        log("  YouTube: skipped (set YOUTUBE_API_KEY to enable)")
         return []
 
     yt = build("youtube", "v3", developerKey=api_key)
@@ -124,7 +137,7 @@ def collect_youtube() -> list[dict]:
 
     results = []
     for query in YOUTUBE_QUERIES:
-        print(f"  YouTube: '{query}'")
+        log(f"  YouTube: '{query}'")
         try:
             resp = yt.search().list(
                 q=query,
@@ -135,7 +148,7 @@ def collect_youtube() -> list[dict]:
                 maxResults=10,
             ).execute()
         except Exception as e:
-            print(f"    ! failed: {e}")
+            log(f"    ! failed: {e}")
             continue
 
         for item in resp.get("items", []):
@@ -153,7 +166,7 @@ def collect_youtube() -> list[dict]:
 # ---------- Google Trends ----------
 
 def collect_trends() -> dict:
-    print(f"  Google Trends: {TRENDS_KEYWORDS}")
+    log(f"  Google Trends: {TRENDS_KEYWORDS}")
     for attempt in range(3):
         try:
             pytrends = TrendReq(hl="en-US", tz=360)
@@ -169,10 +182,10 @@ def collect_trends() -> dict:
             err = str(e)
             if "429" in err and attempt < 2:
                 wait = 30 * (attempt + 1)
-                print(f"    Rate limited, retrying in {wait}s...")
+                log(f"    Rate limited, retrying in {wait}s...")
                 time.sleep(wait)
             else:
-                print(f"    ! failed: {e}")
+                log(f"    ! failed: {e}")
                 return {}
     return {}
 
@@ -264,42 +277,68 @@ def analyze_with_gemini(
                     m = re.search(r"retryDelay.*?(\d+)s", err)
                     if m:
                         wait = int(m.group(1)) + 5
-                    print(f"    Rate limited on {model_name}, waiting {wait}s (attempt {attempt+1}/3)...")
+                    log(f"    Rate limited on {model_name}, waiting {wait}s (attempt {attempt+1}/3)...")
                     time.sleep(wait)
                 else:
-                    print(f"    ! {model_name} failed: {e}")
+                    log(f"    ! {model_name} failed: {e}")
                     break  # non-rate-limit error, try next model
         else:
-            print(f"    ! {model_name} exhausted retries, trying next model...")
+            log(f"    ! {model_name} exhausted retries, trying next model...")
             continue
 
     return "(analysis failed — Gemini quota exhausted on all models)"
 
 
+# ---------- Orchestration ----------
+
+def run_research() -> dict:
+    """Collect signals from all sources and analyze them.
+
+    Returns a structured result. All progress is logged to stderr via log(),
+    so the returned dict (and its JSON form) stays clean for programmatic use.
+    """
+    log("Collecting signals...\n")
+
+    log("Reddit:")
+    reddit_posts = collect_reddit()
+    log(f"  → {len(reddit_posts)} posts\n")
+
+    log("YouTube:")
+    youtube_videos = collect_youtube()
+    log(f"  → {len(youtube_videos)} videos\n")
+
+    log("Trends:")
+    trends = collect_trends()
+    log(f"  → {len(trends)} keyword groups\n")
+
+    log("Analyzing with Gemini...\n")
+    report = analyze_with_gemini(reddit_posts, youtube_videos, trends)
+
+    return {
+        "report": report,
+        "generated_at": datetime.now(timezone.utc).isoformat(),
+        "reddit_count": len(reddit_posts),
+        "youtube_count": len(youtube_videos),
+        "trends_count": len(trends),
+    }
+
+
 # ---------- Main ----------
 
 def main() -> None:
-    print("Collecting signals...\n")
+    json_mode = "--json" in sys.argv[1:]
 
-    print("Reddit:")
-    reddit_posts = collect_reddit()
-    print(f"  → {len(reddit_posts)} posts\n")
+    result = run_research()
 
-    print("YouTube:")
-    youtube_videos = collect_youtube()
-    print(f"  → {len(youtube_videos)} videos\n")
-
-    print("Trends:")
-    trends = collect_trends()
-    print(f"  → {len(trends)} keyword groups\n")
-
-    print("Analyzing with Gemini...\n")
-    report = analyze_with_gemini(reddit_posts, youtube_videos, trends)
-
-    print("=" * 72)
-    print("CONTENT RESEARCH REPORT")
-    print("=" * 72)
-    print(report)
+    if json_mode:
+        # Machine-readable: only JSON on stdout.
+        print(json.dumps(result))
+    else:
+        # Human-readable: pretty report on stdout.
+        print("=" * 72)
+        print("CONTENT RESEARCH REPORT")
+        print("=" * 72)
+        print(result["report"])
 
 
 if __name__ == "__main__":

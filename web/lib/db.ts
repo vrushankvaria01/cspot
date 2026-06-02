@@ -29,6 +29,15 @@ function getDb(): Database.Database {
       created_at      TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS research_reports (
+      id            INTEGER PRIMARY KEY AUTOINCREMENT,
+      report        TEXT NOT NULL,
+      reddit_count  INTEGER NOT NULL DEFAULT 0,
+      youtube_count INTEGER NOT NULL DEFAULT 0,
+      trends_count  INTEGER NOT NULL DEFAULT 0,
+      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+    );
   `);
   return db;
 }
@@ -109,4 +118,48 @@ export function updateIdea(
 export function deleteIdea(id: number): boolean {
   const info = getDb().prepare("DELETE FROM ideas WHERE id = ?").run(id);
   return info.changes > 0;
+}
+
+// ---------- Research reports ----------
+
+export interface ResearchReport {
+  id: number;
+  report: string;
+  reddit_count: number;
+  youtube_count: number;
+  trends_count: number;
+  created_at: string;
+}
+
+export interface ResearchReportInput {
+  report: string;
+  reddit_count?: number;
+  youtube_count?: number;
+  trends_count?: number;
+}
+
+export function createResearchReport(
+  input: ResearchReportInput,
+): ResearchReport {
+  const info = getDb()
+    .prepare(
+      `INSERT INTO research_reports
+         (report, reddit_count, youtube_count, trends_count)
+       VALUES (@report, @reddit_count, @youtube_count, @trends_count)`,
+    )
+    .run({
+      report: input.report,
+      reddit_count: input.reddit_count ?? 0,
+      youtube_count: input.youtube_count ?? 0,
+      trends_count: input.trends_count ?? 0,
+    });
+  return getDb()
+    .prepare("SELECT * FROM research_reports WHERE id = ?")
+    .get(Number(info.lastInsertRowid)) as ResearchReport;
+}
+
+export function getLatestResearchReport(): ResearchReport | undefined {
+  return getDb()
+    .prepare("SELECT * FROM research_reports ORDER BY id DESC LIMIT 1")
+    .get() as ResearchReport | undefined;
 }
