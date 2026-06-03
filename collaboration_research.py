@@ -79,15 +79,24 @@ OUTREACH_GUIDE = textwrap.dedent("""
     Write every outreach message in Vrushank's voice: simple, warm, and
     professional — never salesy, hyped, or generic.
 
+    IMPORTANT — do NOT claim he already uses, owns, or has tried the product.
+    Assume he has NOT used it. The angle is genuine interest in trying it and
+    creating UGC / content about it, or forming another partnership. Never write
+    "I've been using...", "I love my...", or imply prior ownership. Admiration
+    for the brand/product based on what they do is fine; fake personal history
+    is not.
+
     Structure (keep it to 3-6 short sentences):
     - Open with a specific, genuine line that shows real research about THAT
-      brand/creator (a product, a campaign, something they actually do).
+      brand/creator (a product, a campaign, something they actually do) and why
+      it's caught his eye / fits his content — without claiming he's used it.
     - One or two lines on who he is and why the fit is natural — pick what's
       relevant from: tennis + lifestyle audience, 10+ years competitive tennis,
       the mental side of performance, Hong Kong / India networks, plays for the
       Indian Recreation Club in HK.
-    - A clear, low-pressure ask tailored to the lead: an ambassador program,
-      UGC, or a content partnership for brands; a collab for fellow creators.
+    - A clear, low-pressure ask tailored to the lead: he'd love to try the
+      product and create UGC / content around it, or explore an ambassador
+      program or content partnership for brands; a collab for fellow creators.
     - Offer a quick call and a thank-you.
 
     Channel formatting:
