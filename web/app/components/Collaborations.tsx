@@ -165,9 +165,10 @@ export default function Collaborations() {
             Collaborations
           </h1>
           <p className="mt-1 max-w-2xl text-sm text-zinc-500">
-            Brands and creators worth pitching for UGC and partnerships. Run the
-            finder to pull fresh leads, sort by relevance, filter by location,
-            and track outreach from first contact to reply.
+            Brands, products, services, and creators worth pitching — from
+            tennis gear and nutrition to recovery, lifestyle, and OnBrand
+            partners. Each lead suggests how to reach out and drafts a message.
+            Re-run anytime to append fresh leads without losing your list.
           </p>
         </div>
         <button

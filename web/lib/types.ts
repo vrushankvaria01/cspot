@@ -57,10 +57,18 @@ export interface CalendarEvent {
   updated_at: string;
 }
 
+export type OutreachChannel =
+  | "email"
+  | "instagram_dm"
+  | "tiktok_dm"
+  | "contact_form"
+  | "linkedin"
+  | "";
+
 export interface Collaboration {
   id: number;
   name: string;
-  type: string; // "brand" | "creator"
+  type: string; // "brand" | "product" | "service" | "creator"
   platform: string; // youtube | instagram | tiktok | web | ""
   category: string;
   location: string;
@@ -70,9 +78,10 @@ export interface Collaboration {
   website: string;
   contact_url: string;
   email_verified: number; // 0 | 1
-  source: string; // "youtube_api" | "ai"
+  source: string; // "youtube_api" | "ai" | "creator_sponsor" | "onbrand"
   subscribers: number | null;
   outreach_message: string;
+  outreach_channel: OutreachChannel;
   status: CollabStatus;
   notes: string;
   created_at: string;

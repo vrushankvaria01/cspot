@@ -66,6 +66,7 @@ function getDb(): Database.Database {
       source           TEXT NOT NULL DEFAULT 'ai',
       subscribers      INTEGER,
       outreach_message TEXT NOT NULL DEFAULT '',
+      outreach_channel TEXT NOT NULL DEFAULT '',
       status           TEXT NOT NULL DEFAULT 'todo',
       notes            TEXT NOT NULL DEFAULT '',
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
@@ -88,6 +89,19 @@ function getDb(): Database.Database {
 
     CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
   `);
+
+  // Lightweight migrations for columns added after a DB was first created.
+  const collabCols = new Set(
+    (db.prepare("PRAGMA table_info(collaborations)").all() as {
+      name: string;
+    }[]).map((c) => c.name),
+  );
+  if (!collabCols.has("outreach_channel")) {
+    db.exec(
+      "ALTER TABLE collaborations ADD COLUMN outreach_channel TEXT NOT NULL DEFAULT ''",
+    );
+  }
+
   return db;
 }
 
@@ -247,6 +261,7 @@ export interface CollaborationInput {
   source?: string;
   subscribers?: number | null;
   outreach_message?: string;
+  outreach_channel?: string;
 }
 
 function dedupeKey(name: string): string {
@@ -278,11 +293,11 @@ export function bulkCreateCollaborations(
     `INSERT OR IGNORE INTO collaborations
        (name, dedupe_key, type, platform, category, location, relevance, why,
         email, website, contact_url, email_verified, source, subscribers,
-        outreach_message)
+        outreach_message, outreach_channel)
      VALUES
        (@name, @dedupe_key, @type, @platform, @category, @location, @relevance,
         @why, @email, @website, @contact_url, @email_verified, @source,
-        @subscribers, @outreach_message)`,
+        @subscribers, @outreach_message, @outreach_channel)`,
   );
 
   const insertedIds: number[] = [];
@@ -311,6 +326,7 @@ export function bulkCreateCollaborations(
         subscribers:
           typeof lead.subscribers === "number" ? lead.subscribers : null,
         outreach_message: lead.outreach_message ?? "",
+        outreach_channel: lead.outreach_channel ?? "",
       });
       if (info.changes > 0) insertedIds.push(Number(info.lastInsertRowid));
     }

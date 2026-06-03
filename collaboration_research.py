@@ -1,26 +1,44 @@
 """
-Collaboration & partnership lead finder for a tennis + lifestyle creator.
+Collaboration & partnership lead finder for Vrushank Varia
+(@vrushwitharacquet) — a tennis + lifestyle content creator.
 
-Surfaces brands and fellow creators worth pitching for UGC / partnerships:
-- Real YouTube creators in the niche, pulled live from the YouTube Data API
-  (verifiable channels with links and subscriber counts).
-- Gemini-curated brand leads across tennis apparel, gear, nutrition, and
-  athleisure, plus Instagram/TikTok creator suggestions (flagged AI-sourced
-  since those platforms have no free search API).
-- Best-effort *real* email discovery: for AI brand leads with a website, the
-  script fetches the homepage + contact page and scans for a public email. A
-  lead is marked email_verified=true only when an email is actually found that
-  way; AI-suggested emails are left unverified so you know to double-check.
+Goes wide. The goal is hundreds of relevant, real-feeling leads, built up
+incrementally across runs (re-running KEEPS what you have and only appends new
+names — dedupe is handled by the web app's database and by the existing-names
+list passed in via CSPOT_EXISTING_LEADS).
 
-Each lead gets a category, location, relevance score (0-100) against the
-creator profile, a one-line rationale, and a personalized outreach message.
+What it pulls:
+- Real YouTube creators in the niche, live from the YouTube Data API
+  (verifiable channels with links + subscriber counts).
+- Past partnerships of fellow tennis/lifestyle creators — the brands,
+  products, and services they've actually worked with — surfaced from Gemini's
+  knowledge and grounded in the real creators we discovered (flagged so you can
+  verify before reaching out).
+- A wide sweep of brand/product/service leads across ~16 categories: apparel,
+  racquets & strings, footwear, nutrition, hydration, energy/focus, recovery &
+  wearables, athleisure, accessories, grooming, travel, sports tech & training
+  aids (ball machines, sensors, apps), clubs & academies, physio/spa/recovery
+  services, mental-performance apps, and creator gear. Niche products (e.g. a
+  ball-launcher) and services (spas, detox, recovery) are explicitly in scope.
+- OnBrand roster: Vrushank has an OnBrand account (the IRL brand<>creator
+  network). Seeded with confirmed OnBrand brand partners and expanded with
+  Gemini's knowledge of their catalog, flagged source="onbrand".
 
-Progress is logged to stderr; `--json` prints a clean JSON result on stdout
-(consumed by the web app's collaborations API). CLI behavior is unchanged.
+For every lead: category, location, relevance (0-100) vs. the creator profile,
+a one-line rationale, a suggested OUTREACH CHANNEL (email / Instagram DM /
+TikTok DM / contact form / LinkedIn), and a simple, professional outreach
+message written in Vrushank's voice. Brand emails are best-effort verified by
+scanning the site; AI-suggested emails stay flagged unverified.
+
+Progress logs to stderr; `--json` prints a clean JSON result on stdout
+(consumed by the web app's collaborations API).
 
 Usage:
     python collaboration_research.py            # human-readable table
     python collaboration_research.py --json     # JSON on stdout, progress on stderr
+
+Tunables (env): CSPOT_LEADS_PER_CATEGORY, CSPOT_CREATOR_PARTNER_LEADS,
+CSPOT_ONBRAND_LEADS, CSPOT_EMAIL_SCAN_MAX, CSPOT_YOUTUBE_MAX_CHANNELS.
 """
 
 from __future__ import annotations
@@ -41,41 +59,100 @@ import requests
 from googleapiclient.discovery import build
 
 
-# ---------- Config ----------
+# ---------- Who we're finding partners for ----------
 
-# Who we're finding partners for. Tweak this to sharpen relevance scoring and
-# the tone of the generated outreach messages.
 CREATOR_PROFILE = (
-    "A tennis + lifestyle content creator who makes talking-head and short-form "
-    "videos (TikTok, Reels, YouTube Shorts, and longer YouTube) covering pro-tour "
-    "opinions, match reactions, news takes, tennis fashion/style, and "
-    "tennis-adjacent lifestyle content. Looking for UGC deals and partnerships "
-    "with brands, plus collaborations with fellow creators."
+    "Vrushank Varia (Instagram @vrushwitharacquet) is a tennis + lifestyle "
+    "content creator based in Hong Kong. He makes short-form and talking-head "
+    "videos across Instagram Reels, TikTok, and YouTube — pro-tour takes, match "
+    "reactions, tennis fashion/style, training, and the mental side of "
+    "performance. He has 10+ years of competitive tennis and plays for the "
+    "Indian Recreation Club in Hong Kong, works as an RPE Analyst at Morgan "
+    "Stanley, and has strong networks across Hong Kong and India. He's after "
+    "brand partnerships, UGC deals, ambassador programs, and collaborations "
+    "with fellow creators — relevant to tennis, sport, wellness, and an "
+    "active, design-led lifestyle."
 )
 
+# Voice guide for the outreach messages, modeled on a real pitch Vrushank sends.
+OUTREACH_GUIDE = textwrap.dedent("""
+    Write every outreach message in Vrushank's voice: simple, warm, and
+    professional — never salesy, hyped, or generic.
+
+    Structure (keep it to 3-6 short sentences):
+    - Open with a specific, genuine line that shows real research about THAT
+      brand/creator (a product, a campaign, something they actually do).
+    - One or two lines on who he is and why the fit is natural — pick what's
+      relevant from: tennis + lifestyle audience, 10+ years competitive tennis,
+      the mental side of performance, Hong Kong / India networks, plays for the
+      Indian Recreation Club in HK.
+    - A clear, low-pressure ask tailored to the lead: an ambassador program,
+      UGC, or a content partnership for brands; a collab for fellow creators.
+    - Offer a quick call and a thank-you.
+
+    Channel formatting:
+    - For an email lead, begin the message with "Subject: <short specific
+      subject>" then a blank line, then the body.
+    - Instagram/TikTok DMs are a touch shorter and more casual, still
+      professional. LinkedIn is a touch more formal.
+    - Always sign off as "Vrushank (@vrushwitharacquet)".
+    - NEVER use placeholder tokens like [Name], [Brand], or [your link].
+""").strip()
+
+
+# ---------- Categories (wide on purpose) ----------
+
 CATEGORIES = [
-    "Tennis apparel & brands",
-    "Racquets & gear",
-    "Sports nutrition",
-    "Athleisure & lifestyle",
+    "Tennis apparel & on-court wear",
+    "Racquets, strings & gear",
+    "Tennis & court footwear",
+    "Sports nutrition & supplements",
+    "Hydration & electrolytes",
+    "Energy, focus & nootropics (gum, drinks)",
+    "Recovery, wearables & sleep tech",
+    "Athleisure & lifestyle apparel",
+    "Sunglasses, bags & accessories",
+    "Grooming & skincare for athletes",
+    "Travel, luggage & lifestyle brands",
+    "Sports tech & training aids (ball machines, sensors, coaching apps)",
+    "Tennis clubs, academies & court brands",
+    "Physio, massage, spa, detox & recovery services",
+    "Mental performance & wellness apps",
+    "Creator gear (cameras, mics, editing tools)",
 ]
+
+# Confirmed OnBrand brand partners (public, from OnBrand's own marketing).
+# Gemini expands this with the rest of the roster it knows.
+ONBRAND_SEED = [
+    "Poppi", "OLIPOP", "Liquid Death", "Bloom Nutrition",
+    "Gruns", "PepsiCo", "Nestlé",
+]
+
+# ---------- Volume / limits (env-tunable) ----------
+
+def _int_env(name: str, default: int) -> int:
+    try:
+        return int(os.environ.get(name, str(default)))
+    except (TypeError, ValueError):
+        return default
+
+LEADS_PER_CATEGORY = _int_env("CSPOT_LEADS_PER_CATEGORY", 25)
+CREATOR_PARTNER_LEADS = _int_env("CSPOT_CREATOR_PARTNER_LEADS", 40)
+ONBRAND_LEADS = _int_env("CSPOT_ONBRAND_LEADS", 30)
+EMAIL_SCAN_MAX = _int_env("CSPOT_EMAIL_SCAN_MAX", 40)
+EMAIL_SCAN_TIMEOUT = 8
 
 YOUTUBE_CREATOR_QUERIES = [
-    "tennis creator",
-    "tennis lifestyle vlog",
-    "tennis fashion",
-    "tennis tips coaching",
-    "tennis fan reaction",
+    "tennis creator", "tennis lifestyle vlog", "tennis fashion",
+    "tennis tips coaching", "tennis fan reaction", "tennis vlog",
+    "tennis influencer", "tennis gear review",
 ]
-YOUTUBE_PER_QUERY = 5
-YOUTUBE_MAX_CHANNELS = 15
+YOUTUBE_PER_QUERY = 8
+YOUTUBE_MAX_CHANNELS = _int_env("CSPOT_YOUTUBE_MAX_CHANNELS", 25)
 
-# How many fresh brand / IG / TikTok leads to ask Gemini for each run.
-NEW_LEADS_TARGET = 12
-
-# Email-scan limits (best-effort; many sites block or have no public email).
-EMAIL_SCAN_MAX = 12
-EMAIL_SCAN_TIMEOUT = 8
+# Small pause between Gemini calls to stay friendly with the rate limiter.
+GEMINI_CALL_PAUSE = 1.0
+GEMINI_MODELS = ("gemini-flash-lite-latest", "gemini-2.0-flash-lite", "gemini-2.0-flash")
 
 BROWSER_UA = (
     "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 "
@@ -83,17 +160,142 @@ BROWSER_UA = (
 )
 
 EMAIL_RE = re.compile(r"[A-Za-z0-9._%+\-]+@[A-Za-z0-9.\-]+\.[A-Za-z]{2,}")
-# Junk addresses that show up in markup but aren't real contacts.
 EMAIL_BLOCKLIST = (
     "example.com", "sentry.", "wixpress.com", "@2x", ".png", ".jpg", ".gif",
     ".webp", ".svg", "your-email", "email@", "name@", "domain.com",
 )
+
+VALID_CHANNELS = ("email", "instagram_dm", "tiktok_dm", "contact_form", "linkedin", "")
 
 
 # ---------- Logging ----------
 
 def log(msg: str = "") -> None:
     print(msg, file=sys.stderr, flush=True)
+
+
+# ---------- Gemini helper ----------
+
+_client: genai.Client | None = None
+
+
+def _gemini_client() -> genai.Client | None:
+    global _client
+    if _client is not None:
+        return _client
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        log("  Gemini: skipped (set GEMINI_API_KEY in your .env file)")
+        return None
+    _client = genai.Client(api_key=api_key)
+    return _client
+
+
+def gemini_json(prompt: str, system: str, temperature: float = 0.8):
+    """Call Gemini and return the first complete JSON value, or None."""
+    client = _gemini_client()
+    if client is None:
+        return None
+
+    for model_name in GEMINI_MODELS:
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        response_mime_type="application/json",
+                        temperature=temperature,
+                    ),
+                )
+                text = (response.text or "").strip()
+                if text.startswith("```"):
+                    text = text.strip("`")
+                # Find the first JSON value (object or array).
+                start = min(
+                    [i for i in (text.find("{"), text.find("[")) if i != -1],
+                    default=-1,
+                )
+                if start == -1:
+                    raise json.JSONDecodeError("no JSON found", text, 0)
+                obj, _ = json.JSONDecoder().raw_decode(text[start:])
+                return obj
+            except json.JSONDecodeError as e:
+                log(f"    ! {model_name} returned invalid JSON: {e}")
+                break
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    wait = 60
+                    m = re.search(r"retryDelay.*?(\d+)s", err)
+                    if m:
+                        wait = int(m.group(1)) + 5
+                    log(f"    rate limited on {model_name}, waiting {wait}s "
+                        f"(attempt {attempt + 1}/3)...")
+                    time.sleep(wait)
+                else:
+                    log(f"    ! {model_name} failed: {e}")
+                    break
+        else:
+            continue
+    return None
+
+
+def _leads_from(obj) -> list[dict]:
+    """Accept either a bare list or {'leads': [...]}; return list of dicts."""
+    if isinstance(obj, list):
+        items = obj
+    elif isinstance(obj, dict):
+        items = obj.get("leads") or obj.get("new_leads") or []
+    else:
+        items = []
+    return [x for x in items if isinstance(x, dict)]
+
+
+def _lead_schema_hint() -> str:
+    return textwrap.dedent("""
+        Each lead is an object:
+        {
+          "name": "<brand / product / service / creator name>",
+          "type": "brand" | "product" | "service" | "creator",
+          "platform": "instagram" | "tiktok" | "youtube" | "web" | "",
+          "category": "<one of the target categories, or 'Fellow creators'>",
+          "location": "<country/region, or '' if global/unknown>",
+          "relevance": <int 0-100, fit with the creator profile>,
+          "why": "<one short sentence on why it fits Vrushank>",
+          "email": "<public business email, or '' if you're not certain>",
+          "website": "<homepage or profile URL>",
+          "contact_url": "<contact / partnerships / profile URL>",
+          "outreach_channel": "email" | "instagram_dm" | "tiktok_dm"
+                              | "contact_form" | "linkedin",
+          "outreach_message": "<simple, professional message in Vrushank's voice>"
+        }
+    """).strip()
+
+
+def _system_instruction() -> str:
+    return textwrap.dedent(f"""
+        You build a partnerships / UGC outreach list for a content creator.
+
+        CREATOR PROFILE:
+        {CREATOR_PROFILE}
+
+        OUTREACH MESSAGE GUIDE:
+        {OUTREACH_GUIDE}
+
+        Rules:
+        - Only suggest REAL, well-known or plausibly real organizations/people.
+          Do not invent fictional brands.
+        - Score relevance (0-100) by genuine audience/brand fit with the profile.
+        - Pick outreach_channel by what's realistic: brands with a public
+          partnerships email -> "email"; brands/creators best reached on social
+          -> "instagram_dm" or "tiktok_dm"; otherwise "contact_form"; use
+          "linkedin" only for B2B/agency-style contacts.
+        - Never fabricate emails. Only include an email if you're genuinely
+          confident it's a real public business address; otherwise use "".
+        - Return STRICT JSON only, no prose.
+    """).strip()
 
 
 # ---------- YouTube creators (Data API v3) ----------
@@ -114,9 +316,7 @@ def collect_youtube_creators(existing: set[str]) -> list[dict]:
         log(f"  YouTube: '{query}'")
         try:
             resp = yt.search().list(
-                q=query,
-                part="snippet",
-                type="channel",
+                q=query, part="snippet", type="channel",
                 maxResults=YOUTUBE_PER_QUERY,
             ).execute()
         except Exception as e:
@@ -132,13 +332,11 @@ def collect_youtube_creators(existing: set[str]) -> list[dict]:
         return []
 
     creators: list[dict] = []
-    # channels.list accepts up to 50 ids per call.
     for start in range(0, len(channel_ids), 50):
         batch = channel_ids[start:start + 50]
         try:
             resp = yt.channels().list(
-                part="snippet,statistics",
-                id=",".join(batch),
+                part="snippet,statistics", id=",".join(batch),
             ).execute()
         except Exception as e:
             log(f"    ! channel lookup failed: {e}")
@@ -151,8 +349,7 @@ def collect_youtube_creators(existing: set[str]) -> list[dict]:
                 continue
             custom = snip.get("customUrl")
             url = (
-                f"https://www.youtube.com/{custom}"
-                if custom
+                f"https://www.youtube.com/{custom}" if custom
                 else f"https://www.youtube.com/channel/{item['id']}"
             )
             subs = stats.get("subscriberCount")
@@ -179,9 +376,7 @@ def find_email_on_site(website: str) -> str:
     for url in candidates:
         try:
             resp = requests.get(
-                url,
-                headers={"User-Agent": BROWSER_UA},
-                timeout=EMAIL_SCAN_TIMEOUT,
+                url, headers={"User-Agent": BROWSER_UA}, timeout=EMAIL_SCAN_TIMEOUT,
             )
         except requests.RequestException:
             continue
@@ -200,228 +395,290 @@ def enrich_emails(leads: list[dict]) -> None:
     for lead in leads:
         if scanned >= EMAIL_SCAN_MAX:
             break
-        if lead.get("type") != "brand" or not lead.get("website"):
+        if lead.get("type") not in ("brand", "product", "service"):
             continue
-        if lead.get("email"):
-            # AI suggested one already; still try to confirm a real one.
-            pass
+        if not lead.get("website") or lead.get("email_verified"):
+            continue
         scanned += 1
-        log(f"  Email scan: {lead['name']}")
+        log(f"  Email scan ({scanned}/{EMAIL_SCAN_MAX}): {lead['name']}")
         found = find_email_on_site(lead["website"])
         if found:
             lead["email"] = found
             lead["email_verified"] = True
+            if lead.get("outreach_channel") in ("", "contact_form"):
+                lead["outreach_channel"] = "email"
 
 
-# ---------- Gemini curation + enrichment ----------
+# ---------- Lead generation passes ----------
 
-def _system_instruction() -> str:
-    return textwrap.dedent(f"""
-        You help a content creator build a partnerships/UGC outreach list.
-
-        CREATOR PROFILE:
-        {CREATOR_PROFILE}
-
-        Target categories: {", ".join(CATEGORIES)}.
-
-        For relevance scoring (0-100), reward strong audience/brand fit with the
-        creator profile. Outreach messages must be warm, specific, and concise
-        (2-4 sentences), reference why the partnership fits, and read like a real
-        DM/email from this creator. Never invent fake-looking emails: only include
-        an email if it is a genuinely public business contact you are confident
-        about; otherwise leave email as an empty string.
-    """).strip()
-
-
-def _build_prompt(youtube_creators: list[dict], existing: set[str]) -> str:
-    yt_lines = "\n".join(
-        f"[{i}] {c['name']} — {c.get('subscribers') or '?'} subs — "
-        f"{c['website']}\n    {c['description'][:200]}"
-        for i, c in enumerate(youtube_creators)
-    ) or "(none found)"
-
-    avoid = ", ".join(sorted(existing)) if existing else "(none yet)"
-
-    return textwrap.dedent(f"""
-        Return ONLY a JSON object with this exact shape:
-
-        {{
-          "youtube_enrichment": [
-            {{"index": <int matching the list below>,
-              "category": "<one of the target categories or 'Fellow creators'>",
-              "location": "<best-guess country/region or ''>",
-              "relevance": <int 0-100>,
-              "why": "<one short sentence on fit>",
-              "outreach_message": "<personalized 2-4 sentence DM>"}}
-          ],
-          "new_leads": [
-            {{"name": "<brand or creator name>",
-              "type": "brand" | "creator",
-              "platform": "instagram" | "tiktok" | "web" | "",
-              "category": "<one of the target categories or 'Fellow creators'>",
-              "location": "<country/region>",
-              "relevance": <int 0-100>,
-              "why": "<one short sentence on fit>",
-              "email": "<public business email or ''>",
-              "website": "<homepage or profile URL>",
-              "contact_url": "<contact page or profile URL>",
-              "outreach_message": "<personalized 2-4 sentence pitch>"}}
-          ]
-        }}
-
-        Enrich EVERY YouTube creator below by index. Then add about
-        {NEW_LEADS_TARGET} NEW leads across the target categories — a mix of
-        real brands (with website + public email if you genuinely know it) and a
-        few notable Instagram/TikTok tennis creators (with profile URLs). Do NOT
-        repeat any of these existing names: {avoid}.
-
-        YOUTUBE CREATORS TO ENRICH:
-        {yt_lines}
-    """).strip()
-
-
-def generate_leads(youtube_creators: list[dict], existing: set[str]) -> dict:
-    api_key = os.environ.get("GEMINI_API_KEY")
-    if not api_key:
-        log("  Gemini: skipped (set GEMINI_API_KEY in your .env file)")
-        return {"youtube_enrichment": [], "new_leads": []}
-
-    client = genai.Client(api_key=api_key)
-    prompt = _build_prompt(youtube_creators, existing)
-    system = _system_instruction()
-
-    for model_name in ("gemini-flash-lite-latest", "gemini-2.0-flash-lite", "gemini-2.0-flash"):
-        for attempt in range(3):
-            try:
-                response = client.models.generate_content(
-                    model=model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        system_instruction=system,
-                        response_mime_type="application/json",
-                        temperature=0.7,
-                    ),
-                )
-                text = (response.text or "").strip()
-                if text.startswith("```"):
-                    text = text.strip("`")
-                start = text.find("{")
-                if start == -1:
-                    raise json.JSONDecodeError("no JSON object found", text, 0)
-                # raw_decode reads the first complete JSON value and ignores any
-                # trailing data the model may have appended.
-                obj, _ = json.JSONDecoder().raw_decode(text[start:])
-                return obj
-            except json.JSONDecodeError as e:
-                log(f"    ! {model_name} returned invalid JSON: {e}")
-                break
-            except Exception as e:
-                err = str(e)
-                if "429" in err:
-                    wait = 60
-                    m = re.search(r"retryDelay.*?(\d+)s", err)
-                    if m:
-                        wait = int(m.group(1)) + 5
-                    log(f"    Rate limited on {model_name}, waiting {wait}s (attempt {attempt+1}/3)...")
-                    time.sleep(wait)
-                else:
-                    log(f"    ! {model_name} failed: {e}")
-                    break
-        else:
-            log(f"    ! {model_name} exhausted retries, trying next model...")
-            continue
-
-    return {"youtube_enrichment": [], "new_leads": []}
-
-
-# ---------- Merge ----------
-
-def _coerce_relevance(value) -> int:
+def _normalize_lead(raw: dict, source: str, default_type: str = "brand") -> dict | None:
+    name = (raw.get("name") or "").strip()
+    if not name:
+        return None
+    lead_type = raw.get("type")
+    if lead_type not in ("brand", "product", "service", "creator"):
+        lead_type = default_type
+    channel = raw.get("outreach_channel")
+    if channel not in VALID_CHANNELS:
+        channel = ""
     try:
-        n = int(value)
+        relevance = max(0, min(100, int(raw.get("relevance", 50))))
     except (TypeError, ValueError):
-        return 50
-    return max(0, min(100, n))
-
-
-def merge_leads(youtube_creators: list[dict], curated: dict, existing: set[str]) -> list[dict]:
-    enrich_by_index = {
-        e.get("index"): e for e in curated.get("youtube_enrichment", [])
-        if isinstance(e, dict)
+        relevance = 50
+    email = (raw.get("email") or "").strip()
+    website = (raw.get("website") or "").strip()
+    contact_url = (raw.get("contact_url") or "").strip()
+    platform = raw.get("platform") or ""
+    # Infer a channel if the model didn't give one.
+    if not channel:
+        if email:
+            channel = "email"
+        elif platform == "instagram":
+            channel = "instagram_dm"
+        elif platform == "tiktok":
+            channel = "tiktok_dm"
+        elif website or contact_url:
+            channel = "contact_form"
+    return {
+        "name": name,
+        "type": lead_type,
+        "platform": platform,
+        "category": raw.get("category") or "",
+        "location": raw.get("location") or "",
+        "relevance": relevance,
+        "why": raw.get("why", ""),
+        "email": email,
+        "website": website,
+        "contact_url": contact_url,
+        "email_verified": False,
+        "source": source,
+        "subscribers": None,
+        "outreach_channel": channel,
+        "outreach_message": raw.get("outreach_message", ""),
     }
 
-    leads: list[dict] = []
 
-    # 1) Real YouTube creators, enriched but with factual fields preserved.
-    for i, creator in enumerate(youtube_creators):
-        e = enrich_by_index.get(i, {})
-        leads.append({
-            "name": creator["name"],
+def generate_category_leads(category: str, avoid: set[str]) -> list[dict]:
+    avoid_str = ", ".join(sorted(avoid)[:400]) if avoid else "(none yet)"
+    prompt = textwrap.dedent(f"""
+        Category to mine: "{category}".
+
+        Give me about {LEADS_PER_CATEGORY} REAL leads in this category that fit
+        Vrushank — a mix of brands, specific products, services, and (where the
+        category is creators) fellow creators. Favour ones an active tennis +
+        lifestyle audience would actually care about, including niche/indie
+        names, not just the obvious giants. Include the channel you'd use and a
+        ready-to-send outreach message for each.
+
+        Do NOT repeat any of these names (already on the list):
+        {avoid_str}
+
+        Return STRICT JSON: {{ "leads": [ ... ] }} where
+        {_lead_schema_hint()}
+    """).strip()
+
+    obj = gemini_json(prompt, _system_instruction())
+    out: list[dict] = []
+    for raw in _leads_from(obj):
+        lead = _normalize_lead(raw, source="ai")
+        if lead and lead["name"].lower() not in avoid:
+            if not lead["category"]:
+                lead["category"] = category
+            out.append(lead)
+            avoid.add(lead["name"].lower())
+    return out
+
+
+def generate_creator_partnership_leads(
+    creators: list[dict], avoid: set[str]
+) -> list[dict]:
+    names = [c["name"] for c in creators]
+    creator_str = "; ".join(names[:25]) if names else \
+        "(none discovered — use well-known tennis/lifestyle creators you know)"
+    avoid_str = ", ".join(sorted(avoid)[:400]) if avoid else "(none yet)"
+
+    prompt = textwrap.dedent(f"""
+        Look at tennis & lifestyle creators across YouTube, Instagram, and
+        TikTok — including these real ones we found: {creator_str}.
+
+        From your knowledge, list the BRANDS, PRODUCTS, and SERVICES these and
+        similar creators have actually partnered with, been sponsored by, or are
+        known to use — the kind of partnership Vrushank could realistically land
+        too. Cast a wide net: include niche tennis products (e.g. ball-launcher
+        / ball-machine style gadgets), recovery and wellness services (spas,
+        detox, physio, cold plunge), apparel, nutrition, energy, and tech.
+
+        Give about {CREATOR_PARTNER_LEADS} leads. For each, in "why", briefly
+        note the partnership angle (e.g. "sponsors several tennis YouTubers").
+
+        Do NOT repeat any of these names: {avoid_str}
+
+        Return STRICT JSON: {{ "leads": [ ... ] }} where
+        {_lead_schema_hint()}
+    """).strip()
+
+    obj = gemini_json(prompt, _system_instruction())
+    out: list[dict] = []
+    for raw in _leads_from(obj):
+        lead = _normalize_lead(raw, source="creator_sponsor")
+        if lead and lead["name"].lower() not in avoid:
+            out.append(lead)
+            avoid.add(lead["name"].lower())
+    return out
+
+
+def generate_onbrand_leads(avoid: set[str]) -> list[dict]:
+    seed_str = ", ".join(ONBRAND_SEED)
+    avoid_str = ", ".join(sorted(avoid)[:400]) if avoid else "(none yet)"
+
+    prompt = textwrap.dedent(f"""
+        Vrushank has an account on OnBrand (onbrand.com) — the IRL network that
+        connects creators/event hosts with brands for sponsorships and product
+        sampling. Confirmed OnBrand brand partners include: {seed_str}.
+
+        List about {ONBRAND_LEADS} brands that are on OnBrand or are exactly the
+        kind of consumer / wellness / beverage / lifestyle brand that uses
+        OnBrand, and that fit Vrushank's tennis + lifestyle audience. Include the
+        confirmed seeds above (with full details) plus others you know of.
+
+        Because these are reachable through OnBrand, set outreach_channel to
+        "contact_form" unless you know a better public channel, and mention
+        OnBrand in the outreach_message where natural.
+
+        Do NOT repeat any of these names: {avoid_str}
+
+        Return STRICT JSON: {{ "leads": [ ... ] }} where
+        {_lead_schema_hint()}
+    """).strip()
+
+    obj = gemini_json(prompt, _system_instruction())
+    out: list[dict] = []
+    for raw in _leads_from(obj):
+        lead = _normalize_lead(raw, source="onbrand", default_type="brand")
+        if lead and lead["name"].lower() not in avoid:
+            out.append(lead)
+            avoid.add(lead["name"].lower())
+    return out
+
+
+def enrich_youtube_creators(creators: list[dict], avoid: set[str]) -> list[dict]:
+    """Score + write outreach for the real YouTube channels we found."""
+    if not creators:
+        return []
+    listing = "\n".join(
+        f"[{i}] {c['name']} — {c.get('subscribers') or '?'} subs — {c['website']}\n"
+        f"    {c['description'][:200]}"
+        for i, c in enumerate(creators)
+    )
+    prompt = textwrap.dedent(f"""
+        For each YouTube creator below, decide fit with Vrushank and write a
+        collab outreach message (Instagram or YouTube DM style).
+
+        Return STRICT JSON: {{ "enrichment": [
+          {{"index": <int>, "category": "<category or 'Fellow creators'>",
+            "location": "<country or ''>", "relevance": <int 0-100>,
+            "why": "<one sentence>", "outreach_channel": "instagram_dm",
+            "outreach_message": "<message>"}}
+        ] }}
+
+        CREATORS:
+        {listing}
+    """).strip()
+
+    obj = gemini_json(prompt, _system_instruction())
+    enrich = {}
+    if isinstance(obj, dict):
+        for e in obj.get("enrichment", []):
+            if isinstance(e, dict) and isinstance(e.get("index"), int):
+                enrich[e["index"]] = e
+
+    out: list[dict] = []
+    for i, c in enumerate(creators):
+        if c["name"].lower() in avoid:
+            continue
+        e = enrich.get(i, {})
+        try:
+            relevance = max(0, min(100, int(e.get("relevance", 50))))
+        except (TypeError, ValueError):
+            relevance = 50
+        channel = e.get("outreach_channel")
+        if channel not in VALID_CHANNELS:
+            channel = "instagram_dm"
+        out.append({
+            "name": c["name"],
             "type": "creator",
             "platform": "youtube",
             "category": e.get("category") or "Fellow creators",
-            "location": creator.get("location") or e.get("location") or "",
-            "relevance": _coerce_relevance(e.get("relevance", 50)),
+            "location": c.get("location") or e.get("location") or "",
+            "relevance": relevance,
             "why": e.get("why", ""),
-            "email": "",  # YouTube API never exposes business emails
-            "website": creator["website"],
-            "contact_url": creator["contact_url"],
+            "email": "",
+            "website": c["website"],
+            "contact_url": c["contact_url"],
             "email_verified": False,
             "source": "youtube_api",
-            "subscribers": creator.get("subscribers"),
+            "subscribers": c.get("subscribers"),
+            "outreach_channel": channel,
             "outreach_message": e.get("outreach_message", ""),
         })
-
-    # 2) AI-curated brands + IG/TikTok creators.
-    for nl in curated.get("new_leads", []):
-        if not isinstance(nl, dict):
-            continue
-        name = (nl.get("name") or "").strip()
-        if not name or name.lower() in existing:
-            continue
-        leads.append({
-            "name": name,
-            "type": nl.get("type") if nl.get("type") in ("brand", "creator") else "brand",
-            "platform": nl.get("platform", ""),
-            "category": nl.get("category") or "",
-            "location": nl.get("location") or "",
-            "relevance": _coerce_relevance(nl.get("relevance", 50)),
-            "why": nl.get("why", ""),
-            "email": (nl.get("email") or "").strip(),
-            "website": (nl.get("website") or "").strip(),
-            "contact_url": (nl.get("contact_url") or "").strip(),
-            "email_verified": False,  # AI-suggested until confirmed by scan
-            "source": "ai",
-            "subscribers": None,
-            "outreach_message": nl.get("outreach_message", ""),
-        })
-
-    return leads
+        avoid.add(c["name"].lower())
+    return out
 
 
 # ---------- Orchestration ----------
 
 def run_research(existing: set[str] | None = None) -> dict:
     existing = existing or set()
-    log("Finding collaboration leads...\n")
+    avoid = set(existing)  # grows as we collect, to dedupe within the run
+    leads: list[dict] = []
 
+    log("Finding collaboration leads — going wide.\n")
+
+    # 1) Real YouTube creators, then enrich them.
     log("YouTube creators:")
     youtube_creators = collect_youtube_creators(existing)
-    log(f"  → {len(youtube_creators)} channels\n")
+    log(f"  → {len(youtube_creators)} channels")
+    if youtube_creators:
+        enriched = enrich_youtube_creators(youtube_creators, avoid)
+        leads.extend(enriched)
+        log(f"  → enriched {len(enriched)}")
+        time.sleep(GEMINI_CALL_PAUSE)
+    log("")
 
-    log("Curating brands & enriching with Gemini...")
-    curated = generate_leads(youtube_creators, existing)
-    leads = merge_leads(youtube_creators, curated, existing)
-    log(f"  → {len(leads)} leads\n")
+    # 2) Past partnerships of fellow creators (brands/products/services).
+    log("Mining creator partnerships (brands, products, services)...")
+    partner_leads = generate_creator_partnership_leads(youtube_creators, avoid)
+    leads.extend(partner_leads)
+    log(f"  → {len(partner_leads)} leads")
+    time.sleep(GEMINI_CALL_PAUSE)
+    log("")
 
-    log("Scanning brand sites for public emails...")
+    # 3) OnBrand roster.
+    log("OnBrand roster...")
+    onbrand_leads = generate_onbrand_leads(avoid)
+    leads.extend(onbrand_leads)
+    log(f"  → {len(onbrand_leads)} leads")
+    time.sleep(GEMINI_CALL_PAUSE)
+    log("")
+
+    # 4) Wide category sweep.
+    log(f"Category sweep across {len(CATEGORIES)} categories "
+        f"(~{LEADS_PER_CATEGORY} each)...")
+    for category in CATEGORIES:
+        cat_leads = generate_category_leads(category, avoid)
+        leads.extend(cat_leads)
+        log(f"  • {category}: +{len(cat_leads)} (total {len(leads)})")
+        time.sleep(GEMINI_CALL_PAUSE)
+    log("")
+
+    # 5) Best-effort real email discovery for brands/products/services.
+    log("Scanning sites for public emails...")
     enrich_emails(leads)
     verified = sum(1 for l in leads if l.get("email_verified"))
     log(f"  → {verified} verified email(s)\n")
 
-    # Highest-relevance first.
     leads.sort(key=lambda l: l.get("relevance", 0), reverse=True)
-
+    log(f"Done. {len(leads)} new leads this run.\n")
     return {"leads": leads, "count": len(leads)}
 
 
@@ -450,7 +707,9 @@ def main() -> None:
     for lead in result["leads"]:
         email = lead["email"] or "(no public email)"
         verified = " [verified]" if lead.get("email_verified") else ""
-        print(f"\n[{lead['relevance']:>3}] {lead['name']}  ({lead['type']}/{lead['platform']})")
+        channel = lead.get("outreach_channel") or "?"
+        print(f"\n[{lead['relevance']:>3}] {lead['name']}  "
+              f"({lead['type']}/{lead['platform'] or '—'}) · via {channel}")
         print(f"      {lead['category']} · {lead['location'] or 'location?'}")
         print(f"      {lead['why']}")
         print(f"      {email}{verified} · {lead['website']}")

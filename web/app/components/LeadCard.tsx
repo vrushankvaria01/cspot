@@ -35,6 +35,28 @@ function formatSubs(n: number | null): string | null {
   return String(n);
 }
 
+const CHANNEL_LABELS: Record<string, string> = {
+  email: "Email",
+  instagram_dm: "Instagram DM",
+  tiktok_dm: "TikTok DM",
+  contact_form: "Contact form",
+  linkedin: "LinkedIn",
+};
+
+// Badge shown next to the name to indicate where the lead came from. Verified
+// YouTube channels need no badge.
+const SOURCE_BADGES: Record<string, { label: string; title: string }> = {
+  ai: { label: "AI", title: "Suggested by AI — verify details before reaching out" },
+  creator_sponsor: {
+    label: "Sponsor",
+    title: "A brand/product/service fellow creators have partnered with — verify before reaching out",
+  },
+  onbrand: {
+    label: "OnBrand",
+    title: "Reachable through your OnBrand account — verify on OnBrand",
+  },
+};
+
 export default function LeadCard({ lead, onChange, onDelete }: Props) {
   const [expanded, setExpanded] = useState(false);
   const [notes, setNotes] = useState(lead.notes);
@@ -100,12 +122,12 @@ export default function LeadCard({ lead, onChange, onDelete }: Props) {
             {subs && (
               <span className="text-[11px] text-zinc-500">· {subs} subs</span>
             )}
-            {lead.source === "ai" && (
+            {SOURCE_BADGES[lead.source] && (
               <span
                 className="rounded bg-zinc-800 px-1.5 py-0.5 text-[10px] text-zinc-500"
-                title="Suggested by AI — verify details before reaching out"
+                title={SOURCE_BADGES[lead.source].title}
               >
-                AI
+                {SOURCE_BADGES[lead.source].label}
               </span>
             )}
           </div>
@@ -119,6 +141,12 @@ export default function LeadCard({ lead, onChange, onDelete }: Props) {
           )}
 
           <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px]">
+            {lead.outreach_channel && CHANNEL_LABELS[lead.outreach_channel] && (
+              <span className="inline-flex items-center gap-1 rounded-full border border-zinc-700 bg-zinc-800/60 px-2 py-0.5 text-[10px] text-zinc-300">
+                <span className="text-zinc-500">Reach via</span>
+                {CHANNEL_LABELS[lead.outreach_channel]}
+              </span>
+            )}
             {hasEmail ? (
               <span className="inline-flex items-center gap-1.5">
                 <a

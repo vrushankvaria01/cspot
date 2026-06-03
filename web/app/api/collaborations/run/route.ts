@@ -8,8 +8,9 @@ import {
 } from "@/lib/db";
 
 export const runtime = "nodejs";
-// YouTube + Gemini + best-effort email scans can take a few minutes.
-export const maxDuration = 600;
+// A deep run does many Gemini passes (with rate-limit backoff) plus email
+// scans, so it can run for a while. Generous ceiling for the local tool.
+export const maxDuration = 3600;
 
 const REPO_ROOT = path.join(process.cwd(), "..");
 const SCRIPT = "collaboration_research.py";
