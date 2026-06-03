@@ -3,11 +3,14 @@ import fs from "node:fs";
 import path from "node:path";
 
 import {
+  CalendarEvent,
   Collaboration,
   CollabStatus,
+  EventType,
   Idea,
   IdeaStatus,
   VALID_COLLAB_STATUSES,
+  VALID_EVENT_TYPES,
   VALID_STATUSES,
 } from "./types";
 
@@ -68,6 +71,22 @@ function getDb(): Database.Database {
       created_at       TEXT NOT NULL DEFAULT (datetime('now')),
       updated_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
+
+    CREATE TABLE IF NOT EXISTS events (
+      id          INTEGER PRIMARY KEY AUTOINCREMENT,
+      title       TEXT NOT NULL,
+      type        TEXT NOT NULL DEFAULT 'personal',
+      date        TEXT NOT NULL,
+      start_time  TEXT,
+      end_time    TEXT,
+      all_day     INTEGER NOT NULL DEFAULT 0,
+      location    TEXT NOT NULL DEFAULT '',
+      notes       TEXT NOT NULL DEFAULT '',
+      created_at  TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at  TEXT NOT NULL DEFAULT (datetime('now'))
+    );
+
+    CREATE INDEX IF NOT EXISTS idx_events_date ON events(date);
   `);
   return db;
 }
@@ -346,5 +365,150 @@ export function deleteCollaboration(id: number): boolean {
   const info = getDb()
     .prepare("DELETE FROM collaborations WHERE id = ?")
     .run(id);
+  return info.changes > 0;
+}
+
+// ---------- Calendar events ----------
+
+export interface EventInput {
+  title: string;
+  type?: EventType;
+  date: string;
+  start_time?: string | null;
+  end_time?: string | null;
+  all_day?: boolean | number;
+  location?: string;
+  notes?: string;
+}
+
+const DATE_ONLY_RE = /^\d{4}-\d{2}-\d{2}$/;
+const TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
+
+function normalizeType(type: unknown): EventType {
+  return typeof type === "string" && VALID_EVENT_TYPES.includes(type as EventType)
+    ? (type as EventType)
+    : "personal";
+}
+
+function normalizeTime(value: unknown): string | null {
+  return typeof value === "string" && TIME_RE.test(value) ? value : null;
+}
+
+export function getEvent(id: number): CalendarEvent | undefined {
+  return getDb().prepare("SELECT * FROM events WHERE id = ?").get(id) as
+    | CalendarEvent
+    | undefined;
+}
+
+// Events for a single day, or a date range (inclusive). Ordered so that
+// timed events come before all-day, then by start time.
+export function getEvents(opts: { date?: string; from?: string; to?: string }):
+  CalendarEvent[] {
+  const db = getDb();
+  if (opts.date && DATE_ONLY_RE.test(opts.date)) {
+    return db
+      .prepare(
+        `SELECT * FROM events WHERE date = ?
+         ORDER BY all_day ASC, start_time IS NULL, start_time ASC, id ASC`,
+      )
+      .all(opts.date) as CalendarEvent[];
+  }
+  if (
+    opts.from &&
+    opts.to &&
+    DATE_ONLY_RE.test(opts.from) &&
+    DATE_ONLY_RE.test(opts.to)
+  ) {
+    return db
+      .prepare(
+        `SELECT * FROM events WHERE date >= ? AND date <= ?
+         ORDER BY date ASC, all_day ASC, start_time IS NULL, start_time ASC, id ASC`,
+      )
+      .all(opts.from, opts.to) as CalendarEvent[];
+  }
+  return db
+    .prepare(
+      `SELECT * FROM events
+       ORDER BY date ASC, all_day ASC, start_time IS NULL, start_time ASC, id ASC`,
+    )
+    .all() as CalendarEvent[];
+}
+
+export function createEvent(input: EventInput): CalendarEvent {
+  const allDay = input.all_day ? 1 : 0;
+  const info = getDb()
+    .prepare(
+      `INSERT INTO events
+         (title, type, date, start_time, end_time, all_day, location, notes)
+       VALUES
+         (@title, @type, @date, @start_time, @end_time, @all_day, @location, @notes)`,
+    )
+    .run({
+      title: input.title.trim(),
+      type: normalizeType(input.type),
+      date: input.date,
+      start_time: allDay ? null : normalizeTime(input.start_time),
+      end_time: allDay ? null : normalizeTime(input.end_time),
+      all_day: allDay,
+      location: input.location ?? "",
+      notes: input.notes ?? "",
+    });
+  return getEvent(Number(info.lastInsertRowid))!;
+}
+
+export function updateEvent(
+  id: number,
+  fields: Partial<EventInput>,
+): CalendarEvent | undefined {
+  const existing = getEvent(id);
+  if (!existing) return undefined;
+
+  const sets: string[] = [];
+  const params: Record<string, unknown> = { id };
+
+  if (typeof fields.title === "string" && fields.title.trim()) {
+    sets.push("title = @title");
+    params.title = fields.title.trim();
+  }
+  if (fields.type !== undefined) {
+    sets.push("type = @type");
+    params.type = normalizeType(fields.type);
+  }
+  if (typeof fields.date === "string" && DATE_ONLY_RE.test(fields.date)) {
+    sets.push("date = @date");
+    params.date = fields.date;
+  }
+  if (fields.all_day !== undefined) {
+    sets.push("all_day = @all_day");
+    params.all_day = fields.all_day ? 1 : 0;
+  }
+  if (fields.start_time !== undefined) {
+    sets.push("start_time = @start_time");
+    params.start_time = normalizeTime(fields.start_time);
+  }
+  if (fields.end_time !== undefined) {
+    sets.push("end_time = @end_time");
+    params.end_time = normalizeTime(fields.end_time);
+  }
+  if (typeof fields.location === "string") {
+    sets.push("location = @location");
+    params.location = fields.location;
+  }
+  if (typeof fields.notes === "string") {
+    sets.push("notes = @notes");
+    params.notes = fields.notes;
+  }
+
+  if (sets.length === 0) return existing;
+
+  sets.push("updated_at = datetime('now')");
+  getDb()
+    .prepare(`UPDATE events SET ${sets.join(", ")} WHERE id = @id`)
+    .run(params);
+  return getEvent(id);
+}
+
+export function deleteEvent(id: number): boolean {
+  const info = getDb().prepare("DELETE FROM events WHERE id = ?").run(id);
   return info.changes > 0;
 }

@@ -32,6 +32,31 @@ export const VALID_COLLAB_STATUSES: CollabStatus[] = [
   "done",
 ];
 
+// ---------- Calendar events ----------
+
+export type EventType = "meeting" | "tennis" | "task" | "personal";
+
+export const VALID_EVENT_TYPES: EventType[] = [
+  "meeting",
+  "tennis",
+  "task",
+  "personal",
+];
+
+export interface CalendarEvent {
+  id: number;
+  title: string;
+  type: EventType;
+  date: string; // YYYY-MM-DD (local)
+  start_time: string | null; // "HH:MM" 24h, or null for all-day
+  end_time: string | null; // "HH:MM" 24h, or null
+  all_day: number; // 0 | 1
+  location: string;
+  notes: string;
+  created_at: string;
+  updated_at: string;
+}
+
 export interface Collaboration {
   id: number;
   name: string;

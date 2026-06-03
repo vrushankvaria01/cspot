@@ -2,7 +2,8 @@
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 
-import type { Idea } from "@/lib/types";
+import type { CalendarEvent, Idea } from "@/lib/types";
+import DayView, { EVENT_META, EVENT_TYPES } from "./DayView";
 import ScheduleModal from "./ScheduleModal";
 
 type MilestoneField = "record_date" | "edit_date" | "post_date";
@@ -50,34 +51,21 @@ function ymd(d: Date): string {
   return `${y}-${m}-${day}`;
 }
 
-interface DayEvent {
+interface DayMilestone {
   idea: Idea;
   milestone: Milestone;
 }
 
 export default function Calendar() {
   const [ideas, setIdeas] = useState<Idea[]>([]);
+  const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [scheduling, setScheduling] = useState<Idea | null>(null);
+  const [dayOpen, setDayOpen] = useState<string | null>(null);
   const [cursor, setCursor] = useState(() => {
     const now = new Date();
     return { year: now.getFullYear(), month: now.getMonth() };
   });
-
-  const load = useCallback(async () => {
-    try {
-      const res = await fetch("/api/ideas");
-      setIdeas(await res.json());
-    } catch {
-      // Non-fatal; grid just renders empty.
-    } finally {
-      setLoading(false);
-    }
-  }, []);
-
-  useEffect(() => {
-    load();
-  }, [load]);
 
   // 6-week (42-cell) grid starting on the Sunday on/before the 1st.
   const cells = useMemo(() => {
@@ -90,8 +78,40 @@ export default function Calendar() {
     return out;
   }, [cursor]);
 
-  const eventsByDate = useMemo(() => {
-    const map = new Map<string, DayEvent[]>();
+  const rangeFrom = cells.length ? ymd(cells[0]) : "";
+  const rangeTo = cells.length ? ymd(cells[cells.length - 1]) : "";
+
+  const loadIdeas = useCallback(async () => {
+    try {
+      const res = await fetch("/api/ideas");
+      setIdeas(await res.json());
+    } catch {
+      // Non-fatal; grid just renders empty.
+    } finally {
+      setLoading(false);
+    }
+  }, []);
+
+  const loadEvents = useCallback(async () => {
+    if (!rangeFrom || !rangeTo) return;
+    try {
+      const res = await fetch(`/api/events?from=${rangeFrom}&to=${rangeTo}`);
+      setEvents(await res.json());
+    } catch {
+      // Non-fatal.
+    }
+  }, [rangeFrom, rangeTo]);
+
+  useEffect(() => {
+    loadIdeas();
+  }, [loadIdeas]);
+
+  useEffect(() => {
+    loadEvents();
+  }, [loadEvents]);
+
+  const milestonesByDate = useMemo(() => {
+    const map = new Map<string, DayMilestone[]>();
     for (const idea of ideas) {
       for (const milestone of MILESTONES) {
         const value = idea[milestone.field];
@@ -104,6 +124,16 @@ export default function Calendar() {
     }
     return map;
   }, [ideas]);
+
+  const eventsByDate = useMemo(() => {
+    const map = new Map<string, CalendarEvent[]>();
+    for (const ev of events) {
+      const list = map.get(ev.date) ?? [];
+      list.push(ev);
+      map.set(ev.date, list);
+    }
+    return map;
+  }, [events]);
 
   const unscheduled = useMemo(
     () =>
@@ -132,19 +162,29 @@ export default function Calendar() {
     });
   }
 
+  // Milestones for the open day, mapped to DayView's shape.
+  const openDayMilestones =
+    dayOpen != null
+      ? (milestonesByDate.get(dayOpen) ?? []).map((m) => ({
+          idea: m.idea,
+          label: m.milestone.label,
+          dot: m.milestone.dot,
+        }))
+      : [];
+
   return (
     <div>
       <div className="mb-6 flex items-start justify-between gap-4">
         <div>
           <h1 className="text-2xl font-semibold tracking-tight text-zinc-100">
-            Content Calendar
+            Calendar
           </h1>
           <p className="mt-1 text-sm text-zinc-500">
-            Schedule each idea’s record, edit, and post dates and see the month
-            at a glance.
+            Plan content milestones and your day-to-day — meetings, tennis,
+            tasks, and life. Click any day to see it hour by hour.
           </p>
         </div>
-        <div className="flex shrink-0 items-center gap-2">
+        <div className="flex shrink-0 flex-wrap items-center justify-end gap-x-3 gap-y-1.5">
           {MILESTONES.map((m) => (
             <span
               key={m.field}
@@ -152,6 +192,16 @@ export default function Calendar() {
             >
               <span className={`h-2 w-2 rounded-full ${m.dot}`} />
               {m.label}
+            </span>
+          ))}
+          <span className="h-3 w-px bg-zinc-700" />
+          {EVENT_TYPES.map((t) => (
+            <span
+              key={t.value}
+              className="flex items-center gap-1.5 text-xs text-zinc-400"
+            >
+              <span className={`h-2 w-2 rounded-full ${t.dot}`} />
+              {t.label.split(" ")[0]}
             </span>
           ))}
         </div>
@@ -208,11 +258,64 @@ export default function Calendar() {
                 const key = ymd(date);
                 const inMonth = date.getMonth() === cursor.month;
                 const isToday = key === todayKey;
-                const events = eventsByDate.get(key) ?? [];
+                const milestones = milestonesByDate.get(key) ?? [];
+                const dayEvents = eventsByDate.get(key) ?? [];
+                const chips: React.ReactNode[] = [];
+                for (const m of milestones) {
+                  chips.push(
+                    <button
+                      key={`m-${m.idea.id}-${m.milestone.field}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setScheduling(m.idea);
+                      }}
+                      title={`${m.milestone.label}: ${m.idea.title}`}
+                      className={`flex w-full items-center gap-1 truncate rounded border px-1.5 py-0.5 text-left text-[11px] transition-colors ${m.milestone.chip}`}
+                    >
+                      <span className="truncate">{m.idea.title}</span>
+                    </button>,
+                  );
+                }
+                for (const ev of dayEvents) {
+                  chips.push(
+                    <button
+                      key={`e-${ev.id}`}
+                      type="button"
+                      onClick={(e) => {
+                        e.stopPropagation();
+                        setDayOpen(key);
+                      }}
+                      title={ev.title}
+                      className={`flex w-full items-center gap-1 truncate rounded border px-1.5 py-0.5 text-left text-[11px] transition-colors ${
+                        EVENT_META[ev.type].chip
+                      }`}
+                    >
+                      {!ev.all_day && ev.start_time && (
+                        <span className="shrink-0 tabular-nums opacity-70">
+                          {ev.start_time}
+                        </span>
+                      )}
+                      <span className="truncate">{ev.title}</span>
+                    </button>,
+                  );
+                }
+                const MAX = 3;
+                const shown = chips.slice(0, MAX);
+                const overflow = chips.length - shown.length;
                 return (
                   <div
                     key={i}
-                    className={`min-h-[104px] border-b border-r border-zinc-800/70 p-1.5 ${
+                    role="button"
+                    tabIndex={0}
+                    onClick={() => setDayOpen(key)}
+                    onKeyDown={(e) => {
+                      if (e.key === "Enter" || e.key === " ") {
+                        e.preventDefault();
+                        setDayOpen(key);
+                      }
+                    }}
+                    className={`flex min-h-[104px] cursor-pointer flex-col border-b border-r border-zinc-800/70 p-1.5 text-left transition-colors hover:bg-zinc-900/60 focus:outline-none focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-lime-400/50 ${
                       i % 7 === 6 ? "border-r-0" : ""
                     } ${inMonth ? "bg-zinc-950" : "bg-zinc-900/30"}`}
                   >
@@ -230,17 +333,12 @@ export default function Calendar() {
                       </span>
                     </div>
                     <div className="flex flex-col gap-1">
-                      {events.map((ev, j) => (
-                        <button
-                          key={j}
-                          type="button"
-                          onClick={() => setScheduling(ev.idea)}
-                          title={`${ev.milestone.label}: ${ev.idea.title}`}
-                          className={`flex w-full items-center gap-1 truncate rounded border px-1.5 py-0.5 text-left text-[11px] transition-colors ${ev.milestone.chip}`}
-                        >
-                          <span className="truncate">{ev.idea.title}</span>
-                        </button>
-                      ))}
+                      {shown}
+                      {overflow > 0 && (
+                        <span className="px-1.5 text-[10px] text-zinc-500">
+                          +{overflow} more
+                        </span>
+                      )}
                     </div>
                   </div>
                 );
@@ -284,6 +382,15 @@ export default function Calendar() {
           idea={scheduling}
           onClose={() => setScheduling(null)}
           onSaved={handleSaved}
+        />
+      )}
+
+      {dayOpen && (
+        <DayView
+          date={dayOpen}
+          milestones={openDayMilestones}
+          onClose={() => setDayOpen(null)}
+          onEventsChanged={loadEvents}
         />
       )}
     </div>
