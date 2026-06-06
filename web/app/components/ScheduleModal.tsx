@@ -10,28 +10,50 @@ interface Props {
   onSaved: (idea: Idea) => void;
 }
 
-const FIELDS: {
-  key: "record_date" | "edit_date" | "post_date";
-  label: string;
-  hint: string;
-  dot: string;
-}[] = [
-  { key: "record_date", label: "Record", hint: "Film the footage", dot: "bg-amber-400" },
-  { key: "edit_date", label: "Edit", hint: "Cut it together", dot: "bg-sky-400" },
-  { key: "post_date", label: "Post", hint: "Publish it", dot: "bg-lime-400" },
+type MilestoneKey = "record" | "edit" | "post";
+
+const FIELDS: { key: MilestoneKey; label: string; hint: string; dot: string }[] = [
+  { key: "record", label: "Record", hint: "Film the footage", dot: "bg-amber-400" },
+  { key: "edit", label: "Edit", hint: "Cut it together", dot: "bg-sky-400" },
+  { key: "post", label: "Post", hint: "Publish it", dot: "bg-lime-400" },
 ];
 
+type FormState = Record<
+  MilestoneKey,
+  { date: string; start: string; end: string }
+>;
+
 export default function ScheduleModal({ idea, onClose, onSaved }: Props) {
-  const [dates, setDates] = useState({
-    record_date: idea.record_date ?? "",
-    edit_date: idea.edit_date ?? "",
-    post_date: idea.post_date ?? "",
+  const [form, setForm] = useState<FormState>({
+    record: {
+      date: idea.record_date ?? "",
+      start: idea.record_start_time ?? "",
+      end: idea.record_end_time ?? "",
+    },
+    edit: {
+      date: idea.edit_date ?? "",
+      start: idea.edit_start_time ?? "",
+      end: idea.edit_end_time ?? "",
+    },
+    post: {
+      date: idea.post_date ?? "",
+      start: idea.post_start_time ?? "",
+      end: idea.post_end_time ?? "",
+    },
   });
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState("");
 
-  function setField(key: keyof typeof dates, value: string) {
-    setDates((prev) => ({ ...prev, [key]: value }));
+  function setField(
+    key: MilestoneKey,
+    sub: "date" | "start" | "end",
+    value: string,
+  ) {
+    setForm((prev) => ({ ...prev, [key]: { ...prev[key], [sub]: value } }));
+  }
+
+  function clearMilestone(key: MilestoneKey) {
+    setForm((prev) => ({ ...prev, [key]: { date: "", start: "", end: "" } }));
   }
 
   async function handleSubmit(e: React.FormEvent) {
@@ -39,12 +61,15 @@ export default function ScheduleModal({ idea, onClose, onSaved }: Props) {
     setSaving(true);
     setError("");
 
-    // Empty strings clear the date server-side.
-    const payload = {
-      record_date: dates.record_date || null,
-      edit_date: dates.edit_date || null,
-      post_date: dates.post_date || null,
-    };
+    // Empty strings clear the field server-side. Times only apply if a date is set.
+    const payload: Record<string, string | null> = {};
+    for (const f of FIELDS) {
+      const cell = form[f.key];
+      const date = cell.date || null;
+      payload[`${f.key}_date`] = date;
+      payload[`${f.key}_start_time`] = date ? cell.start || null : null;
+      payload[`${f.key}_end_time`] = date ? cell.end || null : null;
+    }
 
     try {
       const res = await fetch(`/api/ideas/${idea.id}`, {
@@ -61,6 +86,9 @@ export default function ScheduleModal({ idea, onClose, onSaved }: Props) {
     }
   }
 
+  const inputClass =
+    "w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lime-400/60 [color-scheme:dark]";
+
   return (
     <div
       className="fixed inset-0 z-30 flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm sm:items-center"
@@ -76,33 +104,64 @@ export default function ScheduleModal({ idea, onClose, onSaved }: Props) {
         </p>
 
         <form onSubmit={handleSubmit} className="flex flex-col gap-4">
-          {FIELDS.map((f) => (
-            <div key={f.key}>
-              <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-400">
-                <span className={`h-2 w-2 rounded-full ${f.dot}`} />
-                {f.label}
-                <span className="font-normal text-zinc-600">— {f.hint}</span>
-              </label>
-              <div className="flex items-center gap-2">
+          {FIELDS.map((f) => {
+            const cell = form[f.key];
+            const hasDate = !!cell.date;
+            return (
+              <div key={f.key}>
+                <label className="mb-1 flex items-center gap-2 text-xs font-medium text-zinc-400">
+                  <span className={`h-2 w-2 rounded-full ${f.dot}`} />
+                  {f.label}
+                  <span className="font-normal text-zinc-600">— {f.hint}</span>
+                  {hasDate && (
+                    <button
+                      type="button"
+                      onClick={() => clearMilestone(f.key)}
+                      className="ml-auto text-[10px] uppercase tracking-wide text-zinc-500 transition-colors hover:text-zinc-200"
+                    >
+                      Clear
+                    </button>
+                  )}
+                </label>
                 <input
                   type="date"
-                  value={dates[f.key]}
-                  onChange={(e) => setField(f.key, e.target.value)}
-                  className="w-full rounded-lg border border-zinc-700 bg-zinc-950 px-3 py-2 text-sm text-zinc-100 outline-none focus:border-lime-400/60 [color-scheme:dark]"
+                  value={cell.date}
+                  onChange={(e) => setField(f.key, "date", e.target.value)}
+                  className={inputClass}
                 />
-                {dates[f.key] && (
-                  <button
-                    type="button"
-                    onClick={() => setField(f.key, "")}
-                    className="shrink-0 rounded-lg px-2 py-2 text-xs text-zinc-500 transition-colors hover:text-zinc-200"
-                    title="Clear"
-                  >
-                    Clear
-                  </button>
+                {hasDate && (
+                  <div className="mt-2 flex items-center gap-2">
+                    <div className="flex-1">
+                      <label className="mb-0.5 block text-[10px] uppercase tracking-wide text-zinc-500">
+                        Start
+                      </label>
+                      <input
+                        type="time"
+                        value={cell.start}
+                        onChange={(e) =>
+                          setField(f.key, "start", e.target.value)
+                        }
+                        className={inputClass}
+                      />
+                    </div>
+                    <div className="flex-1">
+                      <label className="mb-0.5 block text-[10px] uppercase tracking-wide text-zinc-500">
+                        End <span className="lowercase text-zinc-600">(optional)</span>
+                      </label>
+                      <input
+                        type="time"
+                        value={cell.end}
+                        onChange={(e) =>
+                          setField(f.key, "end", e.target.value)
+                        }
+                        className={inputClass}
+                      />
+                    </div>
+                  </div>
                 )}
               </div>
-            </div>
-          ))}
+            );
+          })}
 
           {error && <p className="text-xs text-red-400">{error}</p>}
 
@@ -119,7 +178,7 @@ export default function ScheduleModal({ idea, onClose, onSaved }: Props) {
               disabled={saving}
               className="rounded-lg bg-lime-400 px-4 py-2 text-sm font-medium text-zinc-950 transition-colors hover:bg-lime-300 disabled:opacity-50"
             >
-              {saving ? "Saving…" : "Save dates"}
+              {saving ? "Saving…" : "Save"}
             </button>
           </div>
         </form>

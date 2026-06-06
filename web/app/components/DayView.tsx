@@ -75,6 +75,9 @@ interface DayMilestone {
   idea: Idea;
   label: string;
   dot: string;
+  chip: string;
+  startTime: string | null; // "HH:MM" or null
+  endTime: string | null;
 }
 
 interface Props {
@@ -82,6 +85,7 @@ interface Props {
   milestones: DayMilestone[];
   onClose: () => void;
   onEventsChanged: () => void;
+  onMilestoneClick?: (idea: Idea) => void;
 }
 
 type EditTarget = "new" | CalendarEvent | null;
@@ -91,6 +95,7 @@ export default function DayView({
   milestones,
   onClose,
   onEventsChanged,
+  onMilestoneClick,
 }: Props) {
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
@@ -128,6 +133,13 @@ export default function DayView({
   const timed = events.filter((e) => !e.all_day && e.start_time);
   const byHour = (h: number) =>
     timed.filter((e) => Number(e.start_time!.split(":")[0]) === h);
+
+  const unscheduledMilestones = milestones.filter((m) => !m.startTime);
+  const timedMilestones = milestones.filter((m) => !!m.startTime);
+  const milestonesByHour = (h: number) =>
+    timedMilestones.filter(
+      (m) => Number(m.startTime!.split(":")[0]) === h,
+    );
 
   function openNew(hour: number | null) {
     setNewStartHour(hour);
@@ -195,18 +207,42 @@ export default function DayView({
           <p className="py-16 text-center text-sm text-zinc-600">Loading…</p>
         ) : (
           <>
-            {(milestones.length > 0 || allDay.length > 0) && (
+            {(unscheduledMilestones.length > 0 || allDay.length > 0) && (
               <div className="flex flex-col gap-1.5 border-b border-zinc-800 bg-zinc-900/60 px-5 py-3">
-                {milestones.map((m, i) => (
-                  <div
-                    key={`ms-${i}`}
-                    className="flex items-center gap-2 text-xs text-zinc-400"
-                  >
-                    <span className={`h-2 w-2 shrink-0 rounded-full ${m.dot}`} />
-                    <span className="font-medium text-zinc-300">{m.label}</span>
-                    <span className="truncate">{m.idea.title}</span>
-                  </div>
-                ))}
+                {unscheduledMilestones.map((m, i) => {
+                  const inner = (
+                    <>
+                      <span className={`h-2 w-2 shrink-0 rounded-full ${m.dot}`} />
+                      <span className="font-medium">{m.label}</span>
+                      <span className="truncate">{m.idea.title}</span>
+                      {onMilestoneClick && (
+                        <span className="ml-auto text-[10px] uppercase tracking-wide opacity-60">
+                          Set time
+                        </span>
+                      )}
+                    </>
+                  );
+                  if (onMilestoneClick) {
+                    return (
+                      <button
+                        key={`ms-${i}`}
+                        type="button"
+                        onClick={() => onMilestoneClick(m.idea)}
+                        className={`flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left text-xs transition-colors ${m.chip}`}
+                      >
+                        {inner}
+                      </button>
+                    );
+                  }
+                  return (
+                    <div
+                      key={`ms-${i}`}
+                      className="flex items-center gap-2 text-xs text-zinc-400"
+                    >
+                      {inner}
+                    </div>
+                  );
+                })}
                 {allDay.map((ev) => (
                   <button
                     key={ev.id}
@@ -228,6 +264,8 @@ export default function DayView({
             <div ref={scrollRef} className="flex-1 overflow-y-auto px-2 py-1">
               {HOURS.map((h) => {
                 const hourEvents = byHour(h);
+                const hourMilestones = milestonesByHour(h);
+                const total = hourEvents.length + hourMilestones.length;
                 return (
                   <div
                     key={h}
@@ -245,7 +283,7 @@ export default function DayView({
                       {hourLabel(h)}
                     </button>
                     <div className="flex flex-1 flex-col gap-1">
-                      {hourEvents.length === 0 ? (
+                      {total === 0 ? (
                         <button
                           type="button"
                           onClick={() => openNew(h)}
@@ -254,25 +292,50 @@ export default function DayView({
                           + Add
                         </button>
                       ) : (
-                        hourEvents.map((ev) => (
-                          <button
-                            key={ev.id}
-                            type="button"
-                            onClick={() => setEditing(ev)}
-                            className={`flex w-full flex-col rounded-md border px-2.5 py-1.5 text-left transition-colors ${
-                              EVENT_META[ev.type].chip
-                            }`}
-                          >
-                            <span className="flex items-center gap-2 text-xs font-medium">
-                              <span className="truncate">{ev.title}</span>
-                            </span>
-                            <span className="text-[10px] opacity-75">
-                              {timeLabel(ev.start_time)}
-                              {ev.end_time ? ` – ${timeLabel(ev.end_time)}` : ""}
-                              {ev.location ? ` · ${ev.location}` : ""}
-                            </span>
-                          </button>
-                        ))
+                        <>
+                          {hourMilestones.map((m, i) => (
+                            <button
+                              key={`m-${m.idea.id}-${i}`}
+                              type="button"
+                              onClick={() => onMilestoneClick?.(m.idea)}
+                              disabled={!onMilestoneClick}
+                              className={`flex w-full flex-col rounded-md border px-2.5 py-1.5 text-left transition-colors ${m.chip}`}
+                            >
+                              <span className="flex items-center gap-2 text-xs font-medium">
+                                <span
+                                  className={`h-1.5 w-1.5 shrink-0 rounded-full ${m.dot}`}
+                                />
+                                <span className="rounded bg-black/20 px-1 py-0.5 text-[9px] uppercase tracking-wide">
+                                  {m.label}
+                                </span>
+                                <span className="truncate">{m.idea.title}</span>
+                              </span>
+                              <span className="text-[10px] opacity-75">
+                                {timeLabel(m.startTime)}
+                                {m.endTime ? ` – ${timeLabel(m.endTime)}` : ""}
+                              </span>
+                            </button>
+                          ))}
+                          {hourEvents.map((ev) => (
+                            <button
+                              key={ev.id}
+                              type="button"
+                              onClick={() => setEditing(ev)}
+                              className={`flex w-full flex-col rounded-md border px-2.5 py-1.5 text-left transition-colors ${
+                                EVENT_META[ev.type].chip
+                              }`}
+                            >
+                              <span className="flex items-center gap-2 text-xs font-medium">
+                                <span className="truncate">{ev.title}</span>
+                              </span>
+                              <span className="text-[10px] opacity-75">
+                                {timeLabel(ev.start_time)}
+                                {ev.end_time ? ` – ${timeLabel(ev.end_time)}` : ""}
+                                {ev.location ? ` · ${ev.location}` : ""}
+                              </span>
+                            </button>
+                          ))}
+                        </>
                       )}
                     </div>
                   </div>

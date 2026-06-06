@@ -28,16 +28,22 @@ function getDb(): Database.Database {
   db.pragma("journal_mode = WAL");
   db.exec(`
     CREATE TABLE IF NOT EXISTS ideas (
-      id              INTEGER PRIMARY KEY AUTOINCREMENT,
-      title           TEXT NOT NULL,
-      status          TEXT NOT NULL DEFAULT 'to_start',
-      notes           TEXT NOT NULL DEFAULT '',
-      inspiration_url TEXT NOT NULL DEFAULT '',
-      record_date     TEXT,
-      edit_date       TEXT,
-      post_date       TEXT,
-      created_at      TEXT NOT NULL DEFAULT (datetime('now')),
-      updated_at      TEXT NOT NULL DEFAULT (datetime('now'))
+      id                  INTEGER PRIMARY KEY AUTOINCREMENT,
+      title               TEXT NOT NULL,
+      status              TEXT NOT NULL DEFAULT 'to_start',
+      notes               TEXT NOT NULL DEFAULT '',
+      inspiration_url     TEXT NOT NULL DEFAULT '',
+      record_date         TEXT,
+      record_start_time   TEXT,
+      record_end_time     TEXT,
+      edit_date           TEXT,
+      edit_start_time     TEXT,
+      edit_end_time       TEXT,
+      post_date           TEXT,
+      post_start_time     TEXT,
+      post_end_time       TEXT,
+      created_at          TEXT NOT NULL DEFAULT (datetime('now')),
+      updated_at          TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS research_reports (
@@ -102,6 +108,24 @@ function getDb(): Database.Database {
     );
   }
 
+  const ideaCols = new Set(
+    (db.prepare("PRAGMA table_info(ideas)").all() as {
+      name: string;
+    }[]).map((c) => c.name),
+  );
+  for (const col of [
+    "record_start_time",
+    "record_end_time",
+    "edit_start_time",
+    "edit_end_time",
+    "post_start_time",
+    "post_end_time",
+  ]) {
+    if (!ideaCols.has(col)) {
+      db.exec(`ALTER TABLE ideas ADD COLUMN ${col} TEXT`);
+    }
+  }
+
   return db;
 }
 
@@ -111,12 +135,27 @@ export interface IdeaInput {
   notes?: string;
   inspiration_url?: string;
   record_date?: string | null;
+  record_start_time?: string | null;
+  record_end_time?: string | null;
   edit_date?: string | null;
+  edit_start_time?: string | null;
+  edit_end_time?: string | null;
   post_date?: string | null;
+  post_start_time?: string | null;
+  post_end_time?: string | null;
 }
 
 const DATE_FIELDS = new Set(["record_date", "edit_date", "post_date"]);
+const IDEA_TIME_FIELDS = new Set([
+  "record_start_time",
+  "record_end_time",
+  "edit_start_time",
+  "edit_end_time",
+  "post_start_time",
+  "post_end_time",
+]);
 const DATE_RE = /^\d{4}-\d{2}-\d{2}$/;
+const IDEA_TIME_RE = /^([01]\d|2[0-3]):[0-5]\d$/;
 
 export function getIdeas(): Idea[] {
   return getDb()
@@ -162,8 +201,14 @@ export function updateIdea(
     "notes",
     "inspiration_url",
     "record_date",
+    "record_start_time",
+    "record_end_time",
     "edit_date",
+    "edit_start_time",
+    "edit_end_time",
     "post_date",
+    "post_start_time",
+    "post_end_time",
   ];
   const sets: string[] = [];
   const params: Record<string, unknown> = { id };
@@ -181,6 +226,14 @@ export function updateIdea(
         continue;
       }
       if (typeof value !== "string" || !DATE_RE.test(value)) continue;
+    }
+    if (IDEA_TIME_FIELDS.has(key)) {
+      // Empty string or null clears the time; otherwise require HH:MM.
+      if (value === null || value === "") {
+        sets.push(`${key} = NULL`);
+        continue;
+      }
+      if (typeof value !== "string" || !IDEA_TIME_RE.test(value)) continue;
     }
     sets.push(`${key} = @${key}`);
     params[key] = value;

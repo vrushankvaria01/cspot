@@ -7,9 +7,19 @@ import DayView, { EVENT_META, EVENT_TYPES } from "./DayView";
 import ScheduleModal from "./ScheduleModal";
 
 type MilestoneField = "record_date" | "edit_date" | "post_date";
+type MilestoneStartField =
+  | "record_start_time"
+  | "edit_start_time"
+  | "post_start_time";
+type MilestoneEndField =
+  | "record_end_time"
+  | "edit_end_time"
+  | "post_end_time";
 
 interface Milestone {
   field: MilestoneField;
+  startField: MilestoneStartField;
+  endField: MilestoneEndField;
   label: string;
   dot: string;
   chip: string;
@@ -18,18 +28,24 @@ interface Milestone {
 const MILESTONES: Milestone[] = [
   {
     field: "record_date",
+    startField: "record_start_time",
+    endField: "record_end_time",
     label: "Record",
     dot: "bg-amber-400",
     chip: "border-amber-400/30 bg-amber-400/10 text-amber-300 hover:bg-amber-400/20",
   },
   {
     field: "edit_date",
+    startField: "edit_start_time",
+    endField: "edit_end_time",
     label: "Edit",
     dot: "bg-sky-400",
     chip: "border-sky-400/30 bg-sky-400/10 text-sky-300 hover:bg-sky-400/20",
   },
   {
     field: "post_date",
+    startField: "post_start_time",
+    endField: "post_end_time",
     label: "Post",
     dot: "bg-lime-400",
     chip: "border-lime-400/30 bg-lime-400/10 text-lime-300 hover:bg-lime-400/20",
@@ -169,6 +185,9 @@ export default function Calendar() {
           idea: m.idea,
           label: m.milestone.label,
           dot: m.milestone.dot,
+          chip: m.milestone.chip,
+          startTime: m.idea[m.milestone.startField] ?? null,
+          endTime: m.idea[m.milestone.endField] ?? null,
         }))
       : [];
 
@@ -262,6 +281,7 @@ export default function Calendar() {
                 const dayEvents = eventsByDate.get(key) ?? [];
                 const chips: React.ReactNode[] = [];
                 for (const m of milestones) {
+                  const start = m.idea[m.milestone.startField];
                   chips.push(
                     <button
                       key={`m-${m.idea.id}-${m.milestone.field}`}
@@ -270,9 +290,16 @@ export default function Calendar() {
                         e.stopPropagation();
                         setScheduling(m.idea);
                       }}
-                      title={`${m.milestone.label}: ${m.idea.title}`}
+                      title={`${m.milestone.label}: ${m.idea.title}${
+                        start ? ` (${start})` : ""
+                      }`}
                       className={`flex w-full items-center gap-1 truncate rounded border px-1.5 py-0.5 text-left text-[11px] transition-colors ${m.milestone.chip}`}
                     >
+                      {start && (
+                        <span className="shrink-0 tabular-nums opacity-70">
+                          {start}
+                        </span>
+                      )}
                       <span className="truncate">{m.idea.title}</span>
                     </button>,
                   );
@@ -391,6 +418,7 @@ export default function Calendar() {
           milestones={openDayMilestones}
           onClose={() => setDayOpen(null)}
           onEventsChanged={loadEvents}
+          onMilestoneClick={(idea) => setScheduling(idea)}
         />
       )}
     </div>

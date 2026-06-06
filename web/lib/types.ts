@@ -10,8 +10,14 @@ export interface Idea {
   notes: string;
   inspiration_url: string;
   record_date: string | null;
+  record_start_time: string | null; // "HH:MM" 24h, optional
+  record_end_time: string | null;
   edit_date: string | null;
+  edit_start_time: string | null;
+  edit_end_time: string | null;
   post_date: string | null;
+  post_start_time: string | null;
+  post_end_time: string | null;
   created_at: string;
   updated_at: string;
 }
