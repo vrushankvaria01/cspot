@@ -289,6 +289,101 @@ def analyze_with_gemini(
     return "(analysis failed — Gemini quota exhausted on all models)"
 
 
+def extract_suggested_ideas(report_markdown: str) -> list[dict]:
+    """Ask Gemini for 5-8 structured idea cards based on the report.
+
+    Returns a list like:
+        [{"title": "...", "notes": "...", "why": "..."}, ...]
+    """
+    api_key = os.environ.get("GEMINI_API_KEY")
+    if not api_key:
+        return []
+
+    client = genai.Client(api_key=api_key)
+
+    prompt = textwrap.dedent(f"""
+        Below is a weekly tennis content-research report. From it, extract 5-8
+        concrete, ready-to-film video ideas for a tennis + lifestyle creator.
+
+        Return STRICT JSON: an object {{ "ideas": [ ... ] }} where each idea is:
+          - title  : short, punchy working title (max ~70 chars)
+          - notes  : 1-3 sentence pitch — hook, angle, and format
+                     (TikTok/Reels short OR YouTube long-form)
+          - why    : a one-line "why now" — the signal from the research
+
+        Favour ideas with clear opinion-bait potential, current storylines, or
+        cross-platform momentum. Avoid duplicates of the same angle.
+
+        --- REPORT ---
+        {report_markdown}
+    """).strip()
+
+    system = textwrap.dedent("""
+        You turn research reports into a punch list of video ideas for a
+        creator. Be specific (real names, real events) — never generic. Keep
+        titles spoken-aloud natural, not clickbait gibberish.
+    """).strip()
+
+    for model_name in ("gemini-2.0-flash", "gemini-2.0-flash-lite", "gemini-flash-lite-latest"):
+        for attempt in range(3):
+            try:
+                response = client.models.generate_content(
+                    model=model_name,
+                    contents=prompt,
+                    config=types.GenerateContentConfig(
+                        system_instruction=system,
+                        response_mime_type="application/json",
+                        temperature=0.7,
+                    ),
+                )
+                text = (response.text or "").strip()
+                if text.startswith("```"):
+                    text = text.strip("`")
+                start = min(
+                    [i for i in (text.find("{"), text.find("[")) if i != -1],
+                    default=-1,
+                )
+                if start == -1:
+                    raise json.JSONDecodeError("no JSON found", text, 0)
+                obj, _ = json.JSONDecoder().raw_decode(text[start:])
+                items = obj.get("ideas") if isinstance(obj, dict) else obj
+                if not isinstance(items, list):
+                    return []
+                out: list[dict] = []
+                for raw in items:
+                    if not isinstance(raw, dict):
+                        continue
+                    title = str(raw.get("title", "")).strip()
+                    if not title:
+                        continue
+                    out.append({
+                        "title": title[:200],
+                        "notes": str(raw.get("notes", "")).strip(),
+                        "why": str(raw.get("why", "")).strip(),
+                    })
+                return out
+            except json.JSONDecodeError as e:
+                log(f"    ! {model_name} returned invalid JSON for ideas: {e}")
+                break
+            except Exception as e:
+                err = str(e)
+                if "429" in err or "RESOURCE_EXHAUSTED" in err:
+                    import re
+                    wait = 60
+                    m = re.search(r"retryDelay.*?(\d+)s", err)
+                    if m:
+                        wait = int(m.group(1)) + 5
+                    log(f"    Rate limited on {model_name}, waiting {wait}s (attempt {attempt+1}/3)...")
+                    time.sleep(wait)
+                else:
+                    log(f"    ! {model_name} failed (ideas): {e}")
+                    break
+        else:
+            continue
+
+    return []
+
+
 # ---------- Orchestration ----------
 
 def run_research() -> dict:
@@ -314,12 +409,17 @@ def run_research() -> dict:
     log("Analyzing with Gemini...\n")
     report = analyze_with_gemini(reddit_posts, youtube_videos, trends)
 
+    log("Extracting suggested ideas...\n")
+    suggested_ideas = extract_suggested_ideas(report)
+    log(f"  → {len(suggested_ideas)} suggested ideas\n")
+
     return {
         "report": report,
         "generated_at": datetime.now(timezone.utc).isoformat(),
         "reddit_count": len(reddit_posts),
         "youtube_count": len(youtube_videos),
         "trends_count": len(trends),
+        "suggested_ideas": suggested_ideas,
     }
 
 

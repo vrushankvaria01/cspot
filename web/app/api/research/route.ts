@@ -22,6 +22,7 @@ interface ScriptResult {
   reddit_count?: number;
   youtube_count?: number;
   trends_count?: number;
+  suggested_ideas?: unknown;
 }
 
 // GET — return the most recently saved report (if any).
@@ -118,6 +119,7 @@ export async function POST() {
             reddit_count: parsed.reddit_count,
             youtube_count: parsed.youtube_count,
             trends_count: parsed.trends_count,
+            suggested_ideas: parsed.suggested_ideas,
           });
           send({ type: "result", report: saved });
         } catch (e) {

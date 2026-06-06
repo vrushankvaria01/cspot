@@ -47,12 +47,13 @@ function getDb(): Database.Database {
     );
 
     CREATE TABLE IF NOT EXISTS research_reports (
-      id            INTEGER PRIMARY KEY AUTOINCREMENT,
-      report        TEXT NOT NULL,
-      reddit_count  INTEGER NOT NULL DEFAULT 0,
-      youtube_count INTEGER NOT NULL DEFAULT 0,
-      trends_count  INTEGER NOT NULL DEFAULT 0,
-      created_at    TEXT NOT NULL DEFAULT (datetime('now'))
+      id               INTEGER PRIMARY KEY AUTOINCREMENT,
+      report           TEXT NOT NULL,
+      reddit_count     INTEGER NOT NULL DEFAULT 0,
+      youtube_count    INTEGER NOT NULL DEFAULT 0,
+      trends_count     INTEGER NOT NULL DEFAULT 0,
+      suggested_ideas  TEXT NOT NULL DEFAULT '[]',
+      created_at       TEXT NOT NULL DEFAULT (datetime('now'))
     );
 
     CREATE TABLE IF NOT EXISTS collaborations (
@@ -105,6 +106,17 @@ function getDb(): Database.Database {
   if (!collabCols.has("outreach_channel")) {
     db.exec(
       "ALTER TABLE collaborations ADD COLUMN outreach_channel TEXT NOT NULL DEFAULT ''",
+    );
+  }
+
+  const reportCols = new Set(
+    (db.prepare("PRAGMA table_info(research_reports)").all() as {
+      name: string;
+    }[]).map((c) => c.name),
+  );
+  if (!reportCols.has("suggested_ideas")) {
+    db.exec(
+      "ALTER TABLE research_reports ADD COLUMN suggested_ideas TEXT NOT NULL DEFAULT '[]'",
     );
   }
 
@@ -255,12 +267,19 @@ export function deleteIdea(id: number): boolean {
 
 // ---------- Research reports ----------
 
+export interface SuggestedIdea {
+  title: string;
+  notes: string;
+  why: string;
+}
+
 export interface ResearchReport {
   id: number;
   report: string;
   reddit_count: number;
   youtube_count: number;
   trends_count: number;
+  suggested_ideas: SuggestedIdea[];
   created_at: string;
 }
 
@@ -269,32 +288,77 @@ export interface ResearchReportInput {
   reddit_count?: number;
   youtube_count?: number;
   trends_count?: number;
+  suggested_ideas?: SuggestedIdea[] | unknown;
+}
+
+interface ResearchReportRow {
+  id: number;
+  report: string;
+  reddit_count: number;
+  youtube_count: number;
+  trends_count: number;
+  suggested_ideas: string;
+  created_at: string;
+}
+
+function rowToReport(row: ResearchReportRow): ResearchReport {
+  let parsed: SuggestedIdea[] = [];
+  try {
+    const data = JSON.parse(row.suggested_ideas || "[]");
+    if (Array.isArray(data)) {
+      parsed = data
+        .filter((x): x is Record<string, unknown> => !!x && typeof x === "object")
+        .map((x) => ({
+          title: String(x.title ?? "").trim(),
+          notes: String(x.notes ?? "").trim(),
+          why: String(x.why ?? "").trim(),
+        }))
+        .filter((x) => x.title.length > 0);
+    }
+  } catch {
+    // Tolerate malformed JSON — just return no suggestions.
+  }
+  return {
+    id: row.id,
+    report: row.report,
+    reddit_count: row.reddit_count,
+    youtube_count: row.youtube_count,
+    trends_count: row.trends_count,
+    suggested_ideas: parsed,
+    created_at: row.created_at,
+  };
 }
 
 export function createResearchReport(
   input: ResearchReportInput,
 ): ResearchReport {
+  const suggested = Array.isArray(input.suggested_ideas)
+    ? input.suggested_ideas
+    : [];
   const info = getDb()
     .prepare(
       `INSERT INTO research_reports
-         (report, reddit_count, youtube_count, trends_count)
-       VALUES (@report, @reddit_count, @youtube_count, @trends_count)`,
+         (report, reddit_count, youtube_count, trends_count, suggested_ideas)
+       VALUES (@report, @reddit_count, @youtube_count, @trends_count, @suggested_ideas)`,
     )
     .run({
       report: input.report,
       reddit_count: input.reddit_count ?? 0,
       youtube_count: input.youtube_count ?? 0,
       trends_count: input.trends_count ?? 0,
+      suggested_ideas: JSON.stringify(suggested),
     });
-  return getDb()
+  const row = getDb()
     .prepare("SELECT * FROM research_reports WHERE id = ?")
-    .get(Number(info.lastInsertRowid)) as ResearchReport;
+    .get(Number(info.lastInsertRowid)) as ResearchReportRow;
+  return rowToReport(row);
 }
 
 export function getLatestResearchReport(): ResearchReport | undefined {
-  return getDb()
+  const row = getDb()
     .prepare("SELECT * FROM research_reports ORDER BY id DESC LIMIT 1")
-    .get() as ResearchReport | undefined;
+    .get() as ResearchReportRow | undefined;
+  return row ? rowToReport(row) : undefined;
 }
 
 // ---------- Collaborations ----------
