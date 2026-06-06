@@ -138,7 +138,7 @@ export default function Calendar() {
   const unscheduled = useMemo(
     () =>
       ideas.filter(
-        (i) => !i.record_date && !i.edit_date && !i.post_date && i.status !== "done",
+        (i) => !i.record_date && !i.edit_date && !i.post_date && i.status !== "complete",
       ),
     [ideas],
   );
