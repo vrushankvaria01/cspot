@@ -100,6 +100,7 @@ export default function DayView({
   const [events, setEvents] = useState<CalendarEvent[]>([]);
   const [loading, setLoading] = useState(true);
   const [editing, setEditing] = useState<EditTarget>(null);
+  const [viewing, setViewing] = useState<CalendarEvent | null>(null);
   const [newStartHour, setNewStartHour] = useState<number | null>(null);
   const scrollRef = useRef<HTMLDivElement>(null);
   const hourRefs = useRef<Record<number, HTMLDivElement | null>>({});
@@ -247,7 +248,7 @@ export default function DayView({
                   <button
                     key={ev.id}
                     type="button"
-                    onClick={() => setEditing(ev)}
+                    onClick={() => setViewing(ev)}
                     className={`flex w-full items-center gap-2 rounded-md border px-2 py-1 text-left text-xs transition-colors ${
                       EVENT_META[ev.type].chip
                     }`}
@@ -320,7 +321,7 @@ export default function DayView({
                             <button
                               key={ev.id}
                               type="button"
-                              onClick={() => setEditing(ev)}
+                              onClick={() => setViewing(ev)}
                               className={`flex w-full flex-col rounded-md border px-2.5 py-1.5 text-left transition-colors ${
                                 EVENT_META[ev.type].chip
                               }`}
@@ -356,6 +357,131 @@ export default function DayView({
           onDelete={editing === "new" ? undefined : handleDelete}
         />
       )}
+
+      {viewing && (
+        <EventDetails
+          event={viewing}
+          onClose={() => setViewing(null)}
+          onEdit={() => {
+            const target = viewing;
+            setViewing(null);
+            setEditing(target);
+          }}
+          onDelete={() => {
+            const target = viewing;
+            setViewing(null);
+            handleDelete(target);
+          }}
+        />
+      )}
+    </div>
+  );
+}
+
+// ---------- Event details (read-only with Edit / Delete) ----------
+
+function EventDetails({
+  event,
+  onClose,
+  onEdit,
+  onDelete,
+}: {
+  event: CalendarEvent;
+  onClose: () => void;
+  onEdit: () => void;
+  onDelete: () => void;
+}) {
+  const meta = EVENT_META[event.type];
+  const timeRange =
+    event.all_day || !event.start_time
+      ? "All day"
+      : `${timeLabel(event.start_time)}${
+          event.end_time ? ` – ${timeLabel(event.end_time)}` : ""
+        }`;
+
+  function handleDelete() {
+    if (window.confirm(`Delete "${event.title}"?`)) onDelete();
+  }
+
+  return (
+    <div
+      className="fixed inset-0 z-40 flex items-start justify-center overflow-y-auto bg-black/60 p-4 backdrop-blur-sm sm:items-center"
+      onClick={onClose}
+    >
+      <div
+        onClick={(e) => e.stopPropagation()}
+        className="flex w-full max-w-md flex-col gap-4 rounded-2xl border border-zinc-800 bg-zinc-900 p-6 shadow-2xl"
+      >
+        <div className="flex items-start justify-between gap-3">
+          <div className="min-w-0 flex-1">
+            <div className="mb-1.5 flex items-center gap-2">
+              <span className={`h-2 w-2 rounded-full ${meta.dot}`} />
+              <span className="text-[11px] uppercase tracking-wide text-zinc-500">
+                {meta.label}
+              </span>
+            </div>
+            <h2 className="break-words text-lg font-semibold text-zinc-100">
+              {event.title}
+            </h2>
+          </div>
+          <div className="flex shrink-0 items-center gap-1">
+            <button
+              type="button"
+              onClick={onEdit}
+              className="rounded-md px-2.5 py-1 text-xs text-zinc-300 transition-colors hover:bg-zinc-800 hover:text-zinc-100"
+              title="Edit"
+            >
+              Edit
+            </button>
+            <button
+              type="button"
+              onClick={onClose}
+              className="rounded-md px-2 py-1 text-sm text-zinc-400 transition-colors hover:text-zinc-100"
+              aria-label="Close"
+            >
+              ✕
+            </button>
+          </div>
+        </div>
+
+        <dl className="flex flex-col gap-2 text-sm">
+          <Row label="When">{timeRange}</Row>
+          {event.location && <Row label="Where">{event.location}</Row>}
+          {event.notes && (
+            <Row label="Notes">
+              <span className="whitespace-pre-wrap">{event.notes}</span>
+            </Row>
+          )}
+        </dl>
+
+        <div className="mt-2 flex items-center border-t border-zinc-800 pt-3 text-xs">
+          <button
+            type="button"
+            onClick={handleDelete}
+            className="text-red-400/80 transition-colors hover:text-red-400"
+          >
+            Delete
+          </button>
+          <button
+            type="button"
+            onClick={onClose}
+            className="ml-auto rounded-lg px-3 py-1.5 text-zinc-400 transition-colors hover:text-zinc-100"
+          >
+            Close
+          </button>
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function Row({ label, children }: { label: string; children: React.ReactNode }) {
+  return (
+    <div className="flex gap-3">
+      <dt className="w-14 shrink-0 text-[11px] uppercase tracking-wide text-zinc-500">
+        {label}
+      </dt>
+      <dd className="min-w-0 flex-1 text-zinc-200">{children}</dd>
     </div>
   );
 }
